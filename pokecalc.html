@@ -16,7 +16,7 @@
 //- pokemonSpecies_t: name, type_t type[2], pokemonSpecies_t * evolveFrom, pokemonSpecies_t * evolveTo[], pokemonSpecies_t * candyType, evolveCost, possibleMoves (movesType * quickMoves[], movesType * chargeMoves[]), stats (baseAttack, baseDefense, baseStamina)
 //  - 0th in the array is an invalid pokemon to use as a placeholder for unknown species and because numbering in pokedex starts from 1
 //  - a double-type pokemon has one type NO_TYPE (this makes double type effectiveness calculation easier)
-//- pokemon -> inherit/derive from pokeSpecies_t class: class name «extends parentclass» { m9s }
+//- pokemon -> inherit/derive from pokeSpecies_t class: class name Â«extends parentclassÂ» { m9s }
 //  - properties: pokemonSpecies_t * species(?), CP, HP (max, actual), level, IV (IV.attack, IV.defense, IV.stamina, negative numbers mean unknown IV values), moves (movesType * quickMove, movesType * chargeMove)
 //  - properties history: store previous species (because of evolving), CP, HP and level values to make IV calculation easier
 //  - after only one combination of IV values is possible, remove history and fill IV properties
@@ -50,9 +50,6 @@
 //https://fevgames.net/pokemon-go-a-deeper-look-into-dodging/
 //https://gist.github.com/anonymous/540700108cf0f051e11f70273e9e2590
 
-//coding:
-//- use naming from SilphRoad
-
 //structure:
 //- data
 //- helper functions: IV calculation, damage calculation, etc
@@ -60,12 +57,9 @@
 //- top level functions: createFightTable(), generateAllPokemons(), etc
 
 //design:
-//- implement in SilphRoad
 //- infographics about how calculation works
 //- filtering to make table smaller
 //- smartphone-optimized
-
-//If coding takes too long, shift to cloud: https://codeanywhere.com/
 
 
 const global = window;
@@ -159,7 +153,7 @@ const ENERGY_MAX = 100;
 const IV_MIN = 0;
 const IV_MAX = 15;
 //timing
-const T_DEFDELAY = 2; //the defending pokémon in the gym automatically waits 2s between each quick move
+const T_DEFDELAY = 2; //the defending pokÃ©mon in the gym automatically waits 2s between each quick move
 //subjective decisions
 const CHARGE_IMP = 1;   //charge move effectiveness importance during comparisons relative to quick move effectiveness
 
@@ -1163,17 +1157,17 @@ for(var i=0; i<matrix[0].length; i++)  //go through defenders
 }
 
 //------------------------------ FINDING THE BEST COMBINATION ------------------------------
-//This computation is to find the best attacker pokémon collection which is a subset of all pokémon.
-//Theoretically all pokémon is the best collection, practically there is a subjective weighting between amount and combinated power.
-//The following calculation will calculate the combinated power and the best composition for all possible amounts of pokémon and then a subjective decision can be used to select the right amount based on the visualized results
+//This computation is to find the best attacker pokÃ©mon collection which is a subset of all pokÃ©mon.
+//Theoretically all pokÃ©mon is the best collection, practically there is a subjective weighting between amount and combinated power.
+//The following calculation will calculate the combinated power and the best composition for all possible amounts of pokÃ©mon and then a subjective decision can be used to select the right amount based on the visualized results
 
- //kiszámolni, hogy melyik kollekció a legjobb
- //i=1-tõl 289-ig:
- //  összes lehetséges kombinációban kiválasztani i-t a 289-bõl
- //    a kiválasztottaknál átlagolni amik ellen a legjobbak
- //    átlagolni az átlagokat
- //  legjobb átlagú kombinációt elmenteni
- //kiválasztani az elmentett kombinációk közül a legjobbat
+ //kiszÃ¡molni, hogy melyik kollekciÃ³ a legjobb
+ //i=1-tÃµl 289-ig:
+ //  Ã¶sszes lehetsÃ©ges kombinÃ¡ciÃ³ban kivÃ¡lasztani i-t a 289-bÃµl
+ //    a kivÃ¡lasztottaknÃ¡l Ã¡tlagolni amik ellen a legjobbak
+ //    Ã¡tlagolni az Ã¡tlagokat
+ //  legjobb Ã¡tlagÃº kombinÃ¡ciÃ³t elmenteni
+ //kivÃ¡lasztani az elmentett kombinÃ¡ciÃ³k kÃ¶zÃ¼l a legjobbat
 /*
 for(var i=1; i<matrix.length; i++)  //go through all possible amount of selected attackers
 {
@@ -1367,7 +1361,7 @@ div.DTFC_LeftBodyLiner {
 </head>
 <body>
 
-PokéCalc (védekezõ fönn, támadó lenn)<br><br>
+PokÃ©Calc (vÃ©dekezÃµ fÃ¶nn, tÃ¡madÃ³ lenn)<br><br>
 <div id="test"></div>
 
 <table id="mainTable"></table>
