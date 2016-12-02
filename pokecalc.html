@@ -1,0 +1,1376 @@
+<html>
+<head>
+
+<link rel="stylesheet" type="text/css" href="DataTables-1.10.12/css/jquery.dataTables.css"/>
+<link rel="stylesheet" type="text/css" href="FixedColumns-3.2.2/css/fixedColumns.dataTables.css"/>
+<!-- <link rel="stylesheet" type="text/css" href="FixedHeader-3.1.2/css/fixedHeader.dataTables.css"/> -->
+<link rel="stylesheet" type="text/css" href="Select-1.2.0/css/select.dataTables.css"/>
+<script type="text/javascript" src="jQuery-2.2.3/jquery-2.2.3.js"></script>
+<script type="text/javascript" src="DataTables-1.10.12/js/jquery.dataTables.js"></script>
+<script type="text/javascript" src="FixedColumns-3.2.2/js/dataTables.fixedColumns.js"></script>
+<!-- <script type="text/javascript" src="FixedHeader-3.1.2/js/dataTables.fixedHeader.js"></script> -->
+<script type="text/javascript" src="Select-1.2.0/js/dataTables.select.js"></script>
+
+<script type="text/javascript">
+//Use object-oriented programming, create classes (see http://es6-features.org/#ClassDefinition):
+//- pokemonSpecies_t: name, type_t type[2], pokemonSpecies_t * evolveFrom, pokemonSpecies_t * evolveTo[], pokemonSpecies_t * candyType, evolveCost, possibleMoves (movesType * quickMoves[], movesType * chargeMoves[]), stats (baseAttack, baseDefense, baseStamina)
+//  - 0th in the array is an invalid pokemon to use as a placeholder for unknown species and because numbering in pokedex starts from 1
+//  - a double-type pokemon has one type NO_TYPE (this makes double type effectiveness calculation easier)
+//- pokemon -> inherit/derive from pokeSpecies_t class: class name «extends parentclass» { m9s }
+//  - properties: pokemonSpecies_t * species(?), CP, HP (max, actual), level, IV (IV.attack, IV.defense, IV.stamina, negative numbers mean unknown IV values), moves (movesType * quickMove, movesType * chargeMove)
+//  - properties history: store previous species (because of evolving), CP, HP and level values to make IV calculation easier
+//  - after only one combination of IV values is possible, remove history and fill IV properties
+//  - properties would be good as flattened, not as nested structures to make reference string smaller and to make data storage and initializing easier
+//  - methods: regress(), evolve(), levelUp(optional levels), levelDown(optional levels), IVType[] setProps(species, CP, HP, level), IVType[] getIV(), attack(pokemon pm), defense(pokemon pm)
+//- movesType: damage, speed, DPS (readonly because computed), groupType group, STAB (readonly, because computed)
+//- enum types_t
+//- int effectiveness[types_t][types_t] -> which type is effective against which type. it contains all the needed information for computing dual type effectivenesses too
+//- effectiveness_t: attackMultiplier, defenseMultiplier
+//- effectiveness_t getEffectiveness(types_t typeAttacker[2], types_t typeDefender[2])
+//- levelupCosts[]
+//is it possible to watch/listen a property/attribute change in the background but as a part of the object? This will useful to check is valid values are set when using syntax pokemon1.CP = 123; (instead of pokemon1.setCP(123) ro any function call)
+//  example: https://developer.mozilla.org/de/docs/Web/JavaScript/Reference/Global_Objects/Object/watch
+//functions to analyse data: fight(pokemon pm1, pokemon pm2), findBestCollection(), findBestMoveset(), pokemonType findBestAgainst(pokemonType pmt), pokemon createPokemon() (converts imported data to internal structure)
+//save and open pokemon collections
+//calculate costs of max (or nth level) with or without evolve
+//use indirect/incremental generation of page to avoid lock and it can be spectacular
+//use immediate refresh of data without using buttons
+//Final aim: a table showing the result of fights of all pokemons with all possible moveset with each other
+
+//resources:
+//my Google Drive / Gym Battle Calculator (Pokemon GO): https://docs.google.com/spreadsheets/d/1z0QILfIi965kvDeYBqiB1yq2rV0-er46H1XNiJbDbDQ/edit
+//https://thesilphroad.com/research
+//https://pokemonshowdown.com/damagecalc/
+//https://www.reddit.com/r/TheSilphRoad/comments/4uffha/pokemon_dps_total_damage_calculator/
+//search for this on Google: (battle OR damage OR attack) calculation "pokemon go"
+//programming resources:
+//https://en.wikipedia.org/wiki/Comparison_of_programming_languages_(object-oriented_programming)
+//http://es6-features.org/
+//http://es6-features.org/#ClassDefinition
+//https://fevgames.net/pokemon-go-a-deeper-look-into-dodging/
+//https://gist.github.com/anonymous/540700108cf0f051e11f70273e9e2590
+
+//coding:
+//- use naming from SilphRoad
+
+//structure:
+//- data
+//- helper functions: IV calculation, damage calculation, etc
+//- classes
+//- top level functions: createFightTable(), generateAllPokemons(), etc
+
+//design:
+//- implement in SilphRoad
+//- infographics about how calculation works
+//- filtering to make table smaller
+//- smartphone-optimized
+
+//If coding takes too long, shift to cloud: https://codeanywhere.com/
+
+
+const global = window;
+//------------------------------ CONSTANTS ------------------------------
+//this detailed parametrization enables broad customization, it prepares the algorithms for future changes in Pokemon Go
+//placing functions here means that the calculations represented by each function are locked for a specific release, but they can be easily changed if something changes in Pokemon Go
+
+//parameters step 1: these parameters are only to generate the usable parameters
+const _MULTIPLIER_BASE = 1.25;
+const _EFF_MUL = _MULTIPLIER_BASE;
+//CP multiplier data
+const _CPMData = [
+    0.094     , //1
+    0.16639787, //2
+    0.21573247, //3
+    0.25572005, //4
+    0.29024988, //5
+    0.3210876 , //6
+    0.34921268, //7
+    0.37523559, //8
+    0.39956728, //9
+    0.42250001, //10
+    0.44310755, //11
+    0.46279839, //12
+    0.48168495, //13
+    0.49985844, //14
+    0.51739395, //15
+    0.53435433, //16
+    0.55079269, //17
+    0.56675452, //18
+    0.58227891, //19
+    0.59740001, //20
+    0.61215729, //21
+    0.62656713, //22
+    0.64065295, //23
+    0.65443563, //24
+    0.667934  , //25
+    0.68116492, //26
+    0.69414365, //27
+    0.70688421, //28
+    0.71939909, //29
+    0.7317    , //30
+    0.73776948, //31
+    0.74378943, //32
+    0.74976104, //33
+    0.75568551, //34
+    0.76156384, //35
+    0.76739717, //36
+    0.7731865 , //37
+    0.77893275, //38
+    0.78463697, //39
+    0.79030001  //40
+];
+//CP (combat power) multiplier calculation
+function _CPM(level)
+{
+    var base = Math.floor(level) - 1; //-1 because of array indexing
+    
+    if(0 != level%1)
+    {
+        return Math.sqrt( ( (_CPMData[base] * _CPMData[base]) + (_CPMData[base+1] * _CPMData[base+1]) ) / 2);
+    }
+    else
+    {
+        return _CPMData[level-1];
+    }
+};
+//min CP
+const _CP_MIN = 10;
+
+//parameters step 2a: these calculated ones can be used for serious calculations
+const STAB = _MULTIPLIER_BASE;
+//effectiveness multipliers
+const SIMPLE_EFF_MULS = [
+    1/_EFF_MUL, // 0 no effect
+    1/_EFF_MUL, // 1 ineffective
+    1,          // 2 normal
+    _EFF_MUL    // 3 effective
+];
+//exclude these species from every calculation
+const EXCLUDE = [
+    144,    //Articuno
+    145,    //Zapdos
+    146,    //Moltres
+    150,    //MewTwo
+    151     //Mew
+];
+//max energy of a pokemon
+const ENERGY_MAX = 100;
+//IV limits
+const IV_MIN = 0;
+const IV_MAX = 15;
+//timing
+const T_DEFDELAY = 2; //the defending pokémon in the gym automatically waits 2s between each quick move
+//subjective decisions
+const CHARGE_IMP = 1;   //charge move effectiveness importance during comparisons relative to quick move effectiveness
+
+//parameters step 2b: configurable calculations
+function EFF_COMB(effs) //combine type efficiences (in case of dual types)
+{
+    //convert to array if needed
+    if(effs.constructor !== Array)
+    {
+        effs = [effs];
+    }
+    
+    var result = 1;
+    for(var i = 0; i<effs.length; i++)
+    {
+        result *= effs[i];
+    }
+    return result;
+}
+function CP(att, def, sta, attIV, defIV, staIV, level)
+{
+    var CP = Math.floor( (att + attIV) * Math.sqrt(def + defIV) * Math.sqrt(sta + staIV) * _CPM(level) * _CPM(level) * 0.1 );
+    if(_CP_MIN > CP)
+    {
+        return _CP_MIN;
+    }
+    else
+    {
+        return CP;
+    }
+}
+function HP_MAX(sta, staIV, level)
+{
+    return Math.floor( _CPM(level) * (sta + staIV) );
+}
+
+//------------------------------ DATA ------------------------------
+const typesData = [
+    "Bug",      // 0
+    "Dark",     // 1
+    "Dragon",   // 2
+    "Electric", // 3
+    "Fairy",    // 4
+    "Fighting", // 5
+    "Fire",     // 6
+    "Flying",   // 7
+    "Ghost",    // 8
+    "Grass",    // 9
+    "Ground",   // 10
+    "Ice",      // 11
+    "Normal",   // 12
+    "Poison",   // 13
+    "Psychic",  // 14
+    "Rock",     // 15
+    "Steel",    // 16
+    "Water"     // 17
+];
+const effectivenessData = [
+//for the meaning of numbers below see _SIMPLE_EFF_MULS array
+//DEF:  bug dar dra ele fai fig fir fly gho gra gro ice nor poi psy roc ste wat    // ATT
+    [   2,  3,  2,  2,  1,  1,  1,  1,  1,  3,  2,  2,  2,  1,  3,  2,  1,  2   ], // bug
+    [   2,  1,  2,  2,  1,  1,  2,  2,  3,  2,  2,  2,  2,  2,  3,  2,  2,  2   ], // dar
+    [   2,  2,  3,  2,  0,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  1,  2   ], // dra
+    [   2,  2,  1,  1,  2,  2,  2,  3,  2,  1,  0,  2,  2,  2,  2,  2,  2,  3   ], // ele
+    [   2,  3,  3,  2,  2,  3,  1,  2,  2,  2,  2,  2,  2,  1,  2,  2,  1,  2   ], // fai
+    [   1,  3,  2,  2,  1,  2,  2,  1,  0,  2,  2,  3,  3,  1,  1,  3,  3,  2   ], // fig
+    [   3,  2,  1,  2,  2,  2,  1,  2,  2,  3,  2,  3,  2,  2,  2,  1,  3,  1   ], // fir
+    [   3,  2,  2,  1,  2,  3,  2,  2,  2,  3,  2,  2,  2,  2,  2,  1,  1,  2   ], // fly
+    [   2,  1,  2,  2,  2,  2,  2,  2,  3,  2,  2,  2,  0,  2,  3,  2,  2,  2   ], // gho
+    [   1,  2,  1,  2,  2,  2,  1,  1,  2,  1,  3,  2,  2,  1,  2,  3,  1,  3   ], // gra
+    [   1,  2,  2,  3,  2,  2,  3,  0,  2,  1,  2,  2,  2,  3,  2,  3,  3,  2   ], // gro
+    [   2,  2,  3,  2,  2,  2,  1,  3,  2,  3,  3,  1,  2,  2,  2,  2,  1,  1   ], // ice
+    [   2,  2,  2,  2,  2,  2,  2,  2,  0,  2,  2,  2,  2,  2,  2,  1,  1,  2   ], // nor
+    [   2,  2,  2,  2,  3,  2,  2,  2,  1,  3,  1,  2,  2,  1,  2,  1,  0,  2   ], // poi
+    [   2,  0,  2,  2,  2,  3,  2,  2,  2,  2,  2,  2,  2,  3,  1,  2,  1,  2   ], // psy
+    [   3,  2,  2,  2,  2,  1,  3,  3,  2,  2,  1,  3,  2,  2,  2,  2,  1,  2   ], // roc
+    [   2,  2,  2,  1,  3,  2,  1,  2,  2,  2,  2,  3,  2,  2,  2,  3,  1,  1   ], // ste
+    [   2,  2,  1,  2,  2,  2,  3,  2,  2,  1,  3,  2,  2,  2,  2,  3,  2,  1   ]  // wat
+];
+//TODO: remove INVALID moves
+const quickMovesData = [
+//      name                type time  ATT EPU  dDPS  DPS
+    [   "INVALID",          -1,  0.00,  0,  0,  0.00,  0.00 ],  //0
+    [   "Acid",             13,  1.05, 10, 10,  3.28,  9.52 ],  //1
+    [   "Bite",              1,  0.50,  6,  7,  2.40, 12.00 ],  //2
+    [   "Bubble",           17,  2.30, 25, 25,  5.81, 10.87 ],  //3
+    [   "Bug Bite",          0,  0.45,  5,  7,  2.04, 11.11 ],  //4
+    [   "Bullet Punch",     16,  1.20, 10, 10,  3.13,  8.33 ],  //5
+    [   "Confusion",        14,  1.51, 15, 14,  4.27,  9.93 ],  //6
+    [   "Cut",              12,  1.13, 12, 10,  3.83, 10.62 ],  //7
+    [   "Dragon Breath",     2,  0.50,  6,  7,  2.40, 12.00 ],  //8
+    [   "Ember",             6,  1.05, 10, 10,  3.28,  9.52 ],  //9
+    [   "Feint Attack",      1,  1.04, 12, 10,  3.95, 11.54 ],  //10
+    [   "Fire Fang",         6,  0.84, 10,  8,  3.52, 11.90 ],  //11
+    [   "Frost Breath",     11,  0.81,  9,  7,  3.20, 11.11 ],  //12
+    [   "Fury Cutter",       0,  0.40,  3,  6,  1.25,  7.50 ],  //13
+    [   "Ice Shard",        11,  1.40, 15, 12,  4.41, 10.71 ],  //14
+    [   "Karate Chop",       5,  0.80,  6,  8,  2.14,  7.50 ],  //15
+    [   "Lick",              8,  0.50,  5,  6,  2.00, 10.00 ],  //16
+    [   "Low Kick",          5,  0.60,  5,  7,  1.92,  8.33 ],  //17
+    [   "Metal Claw",       16,  0.63,  8,  7,  3.04, 12.70 ],  //18
+    [   "Mud Shot",         10,  0.55,  6,  7,  2.35, 10.91 ],  //19
+    [   "Mud Slap",         10,  1.35, 15, 12,  4.48, 11.11 ],  //20
+    [   "Peck",              7,  1.15, 10, 10,  3.17,  8.70 ],  //21
+    [   "Poison Jab",       13,  1.05, 12, 10,  3.93, 11.43 ],  //22
+    [   "Poison Sting",     13,  0.58,  6,  8,  2.33, 10.43 ],  //23
+    [   "Pound",            12,  0.54,  7,  7,  2.76, 12.96 ],  //24
+    [   "Psycho Cut",       14,  0.57,  7,  7,  2.72, 12.28 ],  //25
+    [   "Quick Attack",     12,  1.33, 10, 12,  3.00,  7.52 ],  //26
+    [   "Razor Leaf",        9,  1.45, 15, 12,  4.35, 10.34 ],  //27
+    [   "Rock Smash",        5,  1.41, 15, 12,  4.40, 10.64 ],  //28
+    [   "Rock Throw",       15,  1.36, 12, 15,  3.57,  8.82 ],  //29
+    [   "Scratch",          12,  0.50,  6,  7,  2.40, 12.00 ],  //30
+    [   "Shadow Claw",       8,  0.95, 11,  8,  3.73, 11.58 ],  //31
+    [   "Spark",             3,  0.70,  7,  8,  2.59, 10.00 ],  //32
+    [   "Splash",           17,  1.23,  0, 10,  0.00,  0.00 ],  //33
+    [   "Steel Wing",       16,  1.33, 15, 12,  4.50, 11.28 ],  //34
+    [   "Sucker Punch",      1,  0.70,  7,  9,  2.59, 10.00 ],  //35
+    [   "Tackle",           12,  1.10, 12, 10,  3.87, 10.91 ],  //36
+    [   "Thunder Shock",     3,  0.60,  5,  8,  1.92,  8.33 ],  //37
+    [   "Vine Whip",         9,  0.65,  7,  7,  2.64, 10.77 ],  //38
+    [   "Water Gun",        17,  0.50,  6,  7,  2.40, 12.00 ],  //39
+    [   "Wing Attack",       7,  0.75,  9,  7,  3.27, 12.00 ],  //40
+    [   "Zen Headbutt",     14,  1.05, 12,  9,  3.93, 11.43 ]   //41
+];
+const chargeMovesData = [
+//      name              type  E  time  dodge crit  ATT  DPS
+    [   "INVALID",          -1, 0, 0.00, 0.00, 0.00,   0,  0.00 ],  //0
+    [   "Aerial Ace",        7, 4, 2.90, 1.30, 0.05,  30, 10.34 ],  //1
+    [   "Air Cutter",        7, 4, 3.30, 1.60, 0.25,  30,  9.09 ],  //2
+    [   "Ancient Power",    15, 4, 3.60, 1.05, 0.05,  35,  9.72 ],  //3
+    [   "Aqua Jet",         17, 5, 2.35, 1.10, 0.05,  25, 10.64 ],  //4
+    [   "Aqua Tail",        17, 2, 2.35, 0.90, 0.05,  45, 19.15 ],  //5
+    [   "Blizzard",         11, 1, 3.90, 0.70, 0.05, 100, 25.64 ],  //6
+    [   "Body Slam",        12, 2, 1.56, 0.90, 0.05,  40, 25.64 ],  //7
+    [   "Bone Club",        10, 4, 1.60, 0.95, 0.05,  25, 15.63 ],  //8
+    [   "Brick Break",       5, 3, 1.60, 1.10, 0.25,  30, 18.75 ],  //9
+    [   "Brine",            17, 4, 2.40, 1.05, 0.05,  25, 10.42 ],  //10
+    [   "Bubble Beam",      17, 4, 2.90, 0.90, 0.05,  30, 10.34 ],  //11
+    [   "Bug Buzz",          0, 2, 4.25, 2.20, 0.05,  75, 17.65 ],  //12
+    [   "Bulldoze",         10, 4, 3.40, 1.80, 0.05,  35, 10.29 ],  //13
+    [   "Cross Chop",        5, 1, 2.00, 1.00, 0.25,  60, 30.00 ],  //14
+    [   "Cross Poison",     13, 4, 1.50, 1.00, 0.25,  25, 16.67 ],  //15
+    [   "Dark Pulse",        1, 3, 3.50, 1.80, 0.05,  45, 12.86 ],  //16
+    [   "Dazzling Gleam",    4, 3, 4.20, 1.50, 0.05,  55, 13.10 ],  //17
+    [   "Dig",              10, 3, 5.80, 1.10, 0.05,  70, 12.07 ],  //18
+    [   "Disarming Voice",   4, 5, 3.90, 2.50, 0.05,  25,  6.41 ],  //19
+    [   "Discharge",         3, 3, 2.50, 1.40, 0.05,  35, 14.00 ],  //20
+    [   "Dragon Claw",       2, 2, 1.60, 0.90, 0.25,  35, 21.88 ],  //21
+    [   "Dragon Pulse",      2, 2, 3.60, 1.90, 0.05,  65, 18.06 ],  //22
+    [   "Draining Kiss",     4, 5, 2.80, 0.80, 0.05,  25,  8.93 ],  //23
+    [   "Drill Peck",        7, 3, 2.70, 1.60, 0.05,  40, 14.81 ],  //24
+    [   "Drill Run",        10, 3, 3.40, 1.40, 0.25,  50, 14.71 ],  //25
+    [   "Earthquake",       10, 1, 4.20, 2.65, 0.05, 100, 23.81 ],  //26
+    [   "Fire Blast",        6, 1, 4.10, 1.10, 0.05, 100, 24.39 ],  //27
+    [   "Fire Punch",        6, 3, 2.80, 1.21, 0.05,  40, 14.29 ],  //28
+    [   "Flame Burst",       6, 4, 2.10, 2.40, 0.05,  30, 14.29 ],  //29
+    [   "Flame Charge",      6, 5, 3.10, 0.90, 0.05,  25,  8.06 ],  //30
+    [   "Flame Wheel",       6, 4, 4.60, 1.20, 0.05,  40,  8.70 ],  //31
+    [   "Flamethrower",      6, 2, 2.90, 1.60, 0.05,  55, 18.97 ],  //32
+    [   "Flash Cannon",     16, 3, 3.90, 1.80, 0.05,  60, 15.38 ],  //33
+    [   "Gunk Shot",        13, 1, 3.00, 1.10, 0.05,  65, 21.67 ],  //34
+    [   "Heat Wave",         6, 1, 3.80, 1.10, 0.05,  80, 21.05 ],  //35
+    [   "Horn Attack",      12, 4, 2.20, 1.00, 0.05,  25, 11.36 ],  //36
+    [   "Hurricane",         7, 1, 3.20, 2.47, 0.05,  80, 25.00 ],  //37
+    [   "Hydro Pump",       17, 1, 3.80, 2.80, 0.05,  90, 23.68 ],  //38
+    [   "Hyper Beam",       12, 1, 5.00, 1.50, 0.05, 120, 24.00 ],  //39
+    [   "Hyper Fang",       12, 3, 2.10, 1.00, 0.05,  35, 16.67 ],  //40
+    [   "Ice Beam",         11, 2, 3.65, 2.05, 0.05,  65, 17.81 ],  //41
+    [   "Ice Punch",        11, 3, 3.50, 1.80, 0.05,  45, 12.86 ],  //42
+    [   "Icy Wind",         11, 5, 3.80, 1.40, 0.05,  25,  6.58 ],  //43
+    [   "Iron Head",        16, 3, 2.00, 0.95, 0.05,  30, 15.00 ],  //44
+    [   "Leaf Blade",        9, 2, 2.80, 1.70, 0.25,  55, 19.64 ],  //45
+    [   "Low Sweep",         5, 4, 2.25, 0.85, 0.05,  30, 13.33 ],  //46
+    [   "Magnet Bomb",      16, 4, 2.80, 1.25, 0.05,  30, 10.71 ],  //47
+    [   "Megahorn",          0, 1, 3.20, 1.00, 0.05,  80, 25.00 ],  //48
+    [   "Moonblast",         4, 1, 4.10, 1.30, 0.05,  85, 20.73 ],  //49
+    [   "Mud Bomb",         10, 4, 2.60, 1.15, 0.05,  30, 11.54 ],  //50
+    [   "Night Slash",       1, 4, 2.70, 0.90, 0.25,  30, 11.11 ],  //51
+    [   "Ominous Wind",      8, 4, 3.10, 0.95, 0.05,  30,  9.68 ],  //52
+    [   "Petal Blizzard",    9, 2, 3.20, 1.70, 0.05,  65, 20.31 ],  //53
+    [   "Play Rough",        4, 2, 2.90, 2.00, 0.05,  55, 18.97 ],  //54
+    [   "Poison Fang",      13, 5, 2.40, 0.90, 0.05,  25, 10.42 ],  //55
+    [   "Power Gem",        15, 3, 2.90, 1.50, 0.05,  40, 13.79 ],  //56
+    [   "Power Whip",        9, 1, 2.80, 2.00, 0.25,  70, 25.00 ],  //57
+    [   "Psybeam",          14, 4, 3.80, 2.00, 0.05,  40, 10.53 ],  //58
+    [   "Psychic",          14, 2, 2.80, 1.90, 0.05,  55, 19.64 ],  //59
+    [   "Psyshock",         14, 3, 2.70, 1.20, 0.05,  40, 14.81 ],  //60
+    [   "Rock Slide",       15, 3, 3.20, 2.10, 0.05,  50, 15.63 ],  //61
+    [   "Rock Tomb",        15, 4, 3.40, 1.60, 0.25,  30,  8.82 ],  //62
+    [   "Scald",            17, 3, 4.00, 2.80, 0.05,  55, 13.75 ],  //63
+    [   "Seed Bomb",         9, 3, 2.40, 1.20, 0.05,  40, 16.67 ],  //64
+    [   "Shadow Ball",       8, 3, 3.08, 1.00, 0.05,  45, 14.61 ],  //65
+    [   "Signal Beam",       0, 3, 3.10, 1.70, 0.05,  45, 14.52 ],  //66
+    [   "Sludge",           13, 4, 2.60, 1.20, 0.05,  30, 11.54 ],  //67
+    [   "Sludge Bomb",      13, 2, 2.60, 1.20, 0.05,  55, 21.15 ],  //68
+    [   "Sludge Wave",      13, 1, 3.40, 1.60, 0.05,  70, 20.59 ],  //69
+    [   "Solar Beam",        9, 1, 4.90, 2.40, 0.05, 120, 24.49 ],  //70
+    [   "Stomp",            12, 4, 2.10, 1.40, 0.05,  30, 14.29 ],  //71
+    [   "Stone Edge",       15, 1, 3.10, 1.10, 0.50,  80, 25.81 ],  //72
+    [   "Struggle",         12, 5, 1.70, 1.40, 0.05,  15,  8.85 ],  //73
+    [   "Submission",        5, 3, 2.10, 0.85, 0.05,  30, 14.29 ],  //74
+    [   "Swift",            12, 4, 3.00, 1.20, 0.05,  30, 10.00 ],  //75
+    [   "Thunder",           3, 1, 4.30, 2.25, 0.05, 100, 23.26 ],  //76
+    [   "Thunder Punch",     3, 3, 2.40, 0.95, 0.05,  40, 16.67 ],  //77
+    [   "Thunderbolt",       3, 2, 2.70, 1.50, 0.05,  55, 20.37 ],  //78
+    [   "Twister",           2, 5, 2.70, 2.45, 0.05,  25,  9.26 ],  //79
+    [   "Vice Grip",        12, 5, 2.10, 0.95, 0.05,  25, 11.90 ],  //80
+    [   "Water Pulse",      17, 4, 3.30, 1.70, 0.05,  35, 10.61 ],  //81
+    [   "Wrap",             12, 5, 4.00, 1.30, 0.05,  25,  6.25 ],  //82
+    [   "X-Scissor",         0, 3, 2.10, 0.95, 0.05,  35, 16.67 ]   //83
+];
+const speciesData = [
+//       name            types    STA  ATT  DEF candy  quick     charge
+    [   "INVALID",      [-1    ],   0,   0,   0,   0, [0     ], [ 0        ] ],   //invalid
+    [   "Bulbasaur",    [ 9, 13],  90, 118, 118,  25, [36, 38], [57, 64, 68] ],
+    [   "Ivysaur",      [ 9, 13], 120, 151, 151, 100, [27, 38], [57, 68, 70] ],
+    [   "Venusaur",     [ 9, 13], 160, 198, 198,   0, [27, 38], [53, 68, 70] ],
+    [   "Charmander",   [ 6    ],  78, 116,  96,  25, [ 9, 30], [29, 30, 32] ],
+    [   "Charmeleon",   [ 6    ], 116, 158, 129, 100, [ 9, 30], [28, 29, 32] ],
+    [   "Charizard",    [ 6,  7], 156, 223, 176,   0, [ 9, 40], [21, 27, 32] ],
+    [   "Squirtle",     [17    ],  88,  94, 122,  25, [ 3, 36], [ 4,  5, 81] ],
+    [   "Wartortle",    [17    ], 118, 126, 155, 100, [ 2, 39], [ 4, 38, 41] ],
+    [   "Blastoise",    [17    ], 158, 171, 210,   0, [ 2, 39], [33, 38, 41] ],
+    [   "Caterpie",     [ 0    ],  90,  55,  62,  12, [ 4, 36], [73        ] ],
+    [   "Metapod",      [ 0    ], 100,  45,  64,  50, [ 4, 36], [73        ] ],
+    [   "Butterfree",   [ 0,  7], 120, 167, 151,   0, [ 4, 6 ], [12, 59, 66] ],
+    [   "Weedle",       [ 0, 13],  80,  63,  55,  12, [ 4, 23], [73        ] ],
+    [   "Kakuna",       [ 0, 13],  90,  46,  86,  50, [ 4, 23], [73        ] ],
+    [   "Beedrill",     [ 0, 13], 130, 169, 150,   0, [ 4, 22], [ 1, 68, 83] ],
+    [   "Pidgey",       [12,  7],  80,  85,  76,  12, [26, 36], [ 1,  2, 79] ],
+    [   "Pidgeotto",    [12,  7], 126, 117, 108,  50, [34, 40], [ 1,  2, 79] ],
+    [   "Pidgeot",      [12,  7], 166, 166, 157,   0, [34, 40], [ 1,  2, 37] ],
+    [   "Rattata",      [12    ],  60, 103,  70,  25, [26, 36], [ 7, 18, 40] ],
+    [   "Raticate",     [12    ], 110, 161, 144,   0, [ 2, 26], [18, 39, 40] ],
+    [   "Spearow",      [12,  7],  80, 112,  61,  50, [21, 26], [ 1, 24, 79] ],
+    [   "Fearow",       [12,  7], 130, 182, 135,   0, [21, 34], [ 1, 25, 79] ],
+    [   "Ekans",        [13    ],  70, 110, 102,  50, [ 1, 23], [34, 68, 82] ],
+    [   "Arbok",        [13    ], 120, 167, 158,   0, [ 1, 2 ], [16, 34, 69] ],
+    [   "Pikachu",      [ 3    ],  70, 112, 101,  50, [26, 37], [20, 76, 78] ],
+    [   "Raichu",       [ 3    ], 120, 192, 165,   0, [32, 37], [ 9, 76, 77] ],
+    [   "Sandshrew",    [10    ], 100, 126, 145,  50, [19, 30], [18, 61, 62] ],
+    [   "Sandslash",    [10    ], 150, 182, 202,   0, [18, 19], [13, 26, 62] ],
+    [   "NidoranF",     [13    ], 110,  86,  94,  25, [ 2, 23], [ 7, 55, 68] ],
+    [   "Nidorina",     [13    ], 140, 117, 126, 100, [ 2, 23], [18, 55, 68] ],
+    [   "Nidoqueen",    [13, 10], 180, 180, 174,   0, [ 2, 22], [26, 69, 72] ],
+    [   "NidoranM",     [13    ],  92, 105,  76,  25, [21, 23], [ 7, 36, 68] ],
+    [   "Nidorino",     [13    ], 122, 137, 112, 100, [22, 23], [18, 36, 68] ],
+    [   "Nidoking",     [13, 10], 162, 204, 157,   0, [13, 22], [26, 48, 69] ],
+    [   "Clefairy",     [ 4    ], 140, 107, 116,  50, [24, 41], [ 7, 49, 19] ],
+    [   "Clefable",     [ 4    ], 190, 178, 171,   0, [24, 41], [17, 59, 49] ],
+    [   "Vulpix",       [ 6    ],  76,  96, 122,  50, [ 9, 26], [ 7, 30, 32] ],
+    [   "Ninetales",    [ 6    ], 146, 169, 204,   0, [ 9, 10], [27, 32, 35] ],
+    [   "Jigglypuff",   [12,  4], 230,  80,  44,  50, [10, 24], [ 7, 17, 19] ],
+    [   "Wigglytuff",   [12,  4], 280, 156,  93,   0, [10, 24], [17, 39, 54] ],
+    [   "Zubat",        [13,  7],  80,  83,  76,  50, [ 2, 26], [ 2, 55, 68] ],
+    [   "Golbat",       [13,  7], 150, 161, 153,   0, [ 2, 40], [ 2, 52, 55] ],
+    [   "Oddish",       [ 9, 13],  90, 131, 116,  25, [ 1, 27], [49, 64, 68] ],
+    [   "Gloom",        [ 9, 13], 120, 153, 139, 100, [ 1, 27], [53, 49, 68] ],
+    [   "Vileplume",    [ 9, 13], 150, 202, 170,   0, [ 1, 27], [53, 49, 70] ],
+    [   "Paras",        [ 0,  9],  70, 121,  99,  50, [ 4, 30], [15, 64, 83] ],
+    [   "Parasect",     [ 0,  9], 120, 165, 146,   0, [ 4, 13], [15, 70, 83] ],
+    [   "Venonat",      [ 0, 13], 120, 100, 102,  50, [ 4, 6 ], [17, 58, 65] ],
+    [   "Venomoth",     [ 0, 13], 140, 179, 150,   0, [ 4, 6 ], [12, 55, 59] ],
+    [   "Diglett",      [10    ],  20, 109,  88,  50, [19, 30], [18, 50, 62] ],
+    [   "Dugtrio",      [10    ],  70, 167, 147,   0, [19, 35], [26, 50, 72] ],
+    [   "Meowth",       [12    ],  80,  92,  81,  50, [ 2, 30], [ 7, 16, 51] ],
+    [   "Persian",      [12    ], 130, 150, 139,   0, [10, 30], [54, 51, 56] ],
+    [   "Psyduck",      [17    ], 100, 122,  96,  50, [39, 41], [ 5, 14, 58] ],
+    [   "Golduck",      [17    ], 160, 191, 163,   0, [ 6, 39], [38, 41, 59] ],
+    [   "Mankey",       [ 5    ],  80, 148,  87,  50, [15, 30], [ 9, 14, 46] ],
+    [   "Primeape",     [ 5    ], 130, 207, 144,   0, [15, 17], [14, 46, 51] ],
+    [   "Growlithe",    [ 6    ], 110, 136,  96,  50, [ 2, 9 ], [ 7, 31, 32] ],
+    [   "Arcanine",     [ 6    ], 180, 227, 166,   0, [ 2, 11], [13, 27, 32] ],
+    [   "Poliwag",      [17    ],  80, 101,  82,  25, [ 3, 19], [ 7, 11, 50] ],
+    [   "Poliwhirl",    [17    ], 130, 130, 130, 100, [ 3, 19], [11, 50, 63] ],
+    [   "Poliwrath",    [17,  5], 180, 182, 187,   0, [ 3, 19], [38, 42, 74] ],
+    [   "Abra",         [14    ],  50, 195, 103,  25, [41    ], [60, 65, 66] ],
+    [   "Kadabra",      [14    ],  80, 232, 138, 100, [ 6, 25], [17, 58, 65] ],
+    [   "Alakazam",     [14    ], 110, 271, 194,   0, [ 6, 25], [17, 59, 65] ],
+    [   "Machop",       [ 5    ], 140, 137,  88,  25, [15, 17], [ 9, 14, 46] ],
+    [   "Machoke",      [ 5    ], 160, 177, 130, 100, [15, 17], [ 9, 14, 74] ],
+    [   "Machamp",      [ 5    ], 180, 234, 162,   0, [ 5, 15], [14, 72, 74] ],
+    [   "Bellsprout",   [ 9, 13], 100, 139,  64,  25, [ 1, 38], [57, 68, 82] ],
+    [   "Weepinbell",   [ 9, 13], 130, 172,  95, 100, [ 1, 27], [57, 64, 68] ],
+    [   "Victreebel",   [ 9, 13], 160, 207, 138,   0, [ 1, 27], [45, 68, 70] ],
+    [   "Tentacool",    [17, 13],  80,  97, 182,  50, [ 3, 23], [11, 81, 82] ],
+    [   "Tentacruel",   [17, 13], 160, 166, 237,   0, [ 1, 22], [ 6, 38, 69] ],
+    [   "Geodude",      [15, 10],  80, 132, 163,  25, [29, 36], [18, 61, 62] ],
+    [   "Graveler",     [15, 10], 110, 164, 196, 100, [19, 29], [18, 61, 72] ],
+    [   "Golem",        [15, 10], 160, 211, 229,   0, [19, 29], [ 3, 26, 72] ],
+    [   "Ponyta",       [ 6    ], 100, 170, 132,  50, [ 9, 36], [27, 30, 31] ],
+    [   "Rapidash",     [ 6    ], 130, 207, 167,   0, [ 9, 17], [25, 27, 35] ],
+    [   "Slowpoke",     [17, 14], 180, 109, 109,  50, [ 6, 39], [59, 60, 81] ],
+    [   "Slowbro",      [17, 14], 190, 177, 194,   0, [ 6, 39], [41, 59, 81] ],
+    [   "Magnemite",    [ 3, 16],  50, 165, 128,  50, [32, 37], [20, 47, 78] ],
+    [   "Magneton",     [ 3, 16], 100, 223, 182,   0, [32, 37], [20, 33, 47] ],
+    [   "Farfetchd",    [12,  7], 104, 124, 118,   0, [ 7, 13], [ 1,  2, 45] ],
+    [   "Doduo",        [12,  7],  70, 158,  88,  50, [21, 26], [ 1, 24, 75] ],
+    [   "Dodrio",       [12,  7], 120, 218, 145,   0, [10, 34], [ 1,  2, 24] ],
+    [   "Seel",         [17    ], 130,  85, 128,  50, [14, 39], [ 4,  5, 43] ],
+    [   "Dewgong",      [17, 11], 180, 139, 184,   0, [12, 14], [ 4,  6, 43] ],
+    [   "Grimer",       [13    ], 160, 135,  90,  50, [ 1, 20], [50, 67, 68] ],
+    [   "Muk",          [13    ], 210, 190, 184,   0, [ 1, 22], [16, 34, 69] ],
+    [   "Shellder",     [17    ],  60, 116, 168,  50, [14, 36], [11, 43, 81] ],
+    [   "Cloyster",     [17, 11], 100, 186, 323,   0, [12, 14], [ 6, 38, 43] ],
+    [   "Gastly",       [ 8, 13],  60, 186,  70,  25, [16, 35], [16, 52, 68] ],
+    [   "Haunter",      [ 8, 13],  90, 223, 112, 100, [16, 31], [16, 65, 68] ],
+    [   "Gengar",       [ 8, 13], 120, 261, 156,   0, [31, 35], [16, 65, 69] ],
+    [   "Onix",         [15, 10],  70,  85, 288,   0, [29, 36], [44, 61, 72] ],
+    [   "Drowzee",      [14    ], 120,  89, 158,  50, [ 6, 24], [58, 59, 60] ],
+    [   "Hypno",        [14    ], 170, 144, 215,   0, [ 6, 41], [59, 60, 65] ],
+    [   "Krabby",       [17    ],  60, 181, 156,  50, [ 3, 19], [11, 80, 81] ],
+    [   "Kingler",      [17    ], 110, 240, 214,   0, [18, 19], [80, 81, 83] ],
+    [   "Voltorb",      [ 3    ],  80, 109, 114,  50, [32, 36], [20, 66, 78] ],
+    [   "Electrode",    [ 3    ], 120, 173, 179,   0, [32, 36], [20, 39, 78] ],
+    [   "Exeggcute",    [ 9, 14], 120, 107, 140,  50, [ 6    ], [ 3, 59, 64] ],
+    [   "Exeggutor",    [ 9, 14], 190, 233, 158,   0, [ 6, 41], [59, 64, 70] ],
+    [   "Cubone",       [10    ], 100,  90, 165,  50, [20, 28], [ 8, 13, 18] ],
+    [   "Marowak",      [10    ], 120, 144, 200,   0, [20, 28], [ 8, 18, 26] ],
+    [   "Hitmonlee",    [ 5    ], 100, 224, 211,   0, [17, 28], [46, 71, 72] ],
+    [   "Hitmonchan",   [ 5    ], 100, 193, 212,   0, [ 5, 28], [ 9, 28, 42, 77] ],
+    [   "Lickitung",    [12    ], 180, 108, 137,   0, [16, 41], [39, 57, 71] ],
+    [   "Koffing",      [13    ],  80, 119, 164,  50, [ 1, 36], [16, 67, 68] ],
+    [   "Weezing",      [13    ], 130, 174, 221,   0, [ 1, 36], [16, 65, 68] ],
+    [   "Rhyhorn",      [10, 15], 160, 140, 157,  50, [20, 28], [13, 36, 71] ],
+    [   "Rhydon",       [10, 15], 210, 222, 206,   0, [20, 28], [26, 48, 72] ],
+    [   "Chansey",      [12    ], 500,  60, 176,   0, [24, 41], [17, 39, 59] ],
+    [   "Tangela",      [ 9    ], 130, 183, 205,   0, [38    ], [57, 68, 70] ],
+    [   "Kangaskhan",   [12    ], 210, 181, 165,   0, [17, 20], [ 9, 26, 71] ],
+    [   "Horsea",       [17    ],  60, 129, 125,  50, [ 3, 39], [11, 22, 33] ],
+    [   "Seadra",       [17    ], 110, 187, 182,   0, [ 8, 39], [ 6, 22, 38] ],
+    [   "Goldeen",      [17    ],  90, 123, 115,  50, [19, 21], [ 5, 36, 81] ],
+    [   "Seaking",      [17    ], 160, 175, 154,   0, [21, 22], [25, 43, 48] ],
+    [   "Staryu",       [17    ],  60, 137, 112,  50, [26, 39], [11, 56, 75] ],
+    [   "Starmie",      [17, 14], 120, 210, 184,   0, [26, 39], [38, 56, 58] ],
+    [   "MrMime",       [14,  4],  80, 192, 233,   0, [ 6, 41], [58, 59, 65] ],
+    [   "Scyther",      [ 0,  7], 140, 218, 170,   0, [13, 34], [12, 51, 83] ],
+    [   "Jynx",         [11, 14], 130, 223, 182,   0, [12, 24], [42, 60, 23] ],
+    [   "Electabuzz",   [ 3    ], 130, 198, 173,   0, [17, 37], [76, 77, 78] ],
+    [   "Magmar",       [ 6    ], 130, 206, 169,   0, [ 9, 15], [27, 28, 32] ],
+    [   "Pinsir",       [ 0    ], 130, 238, 197,   0, [13, 28], [74, 80, 83] ],
+    [   "Tauros",       [12    ], 150, 198, 197,   0, [36, 41], [26, 36, 44] ],
+    [   "Magikarp",     [17    ],  40,  29, 102, 400, [33    ], [73        ] ],
+    [   "Gyarados",     [17,  7], 190, 237, 197,   0, [ 2    ], [22, 38, 79] ],
+    [   "Lapras",       [17, 11], 260, 186, 190,   0, [12, 14], [ 6, 22, 41] ],
+    [   "Ditto",        [12    ],  96,  91,  91,   0, [24    ], [73        ] ],
+    [   "Eevee",        [12    ], 110, 104, 121,  25, [26, 36], [ 7, 18, 75] ],
+    [   "Vaporeon",     [17    ], 260, 205, 177,   0, [39    ], [ 5, 38, 81] ],
+    [   "Jolteon",      [ 3    ], 130, 232, 201,   0, [37    ], [20, 76, 78] ],
+    [   "Flareon",      [ 6    ], 130, 246, 204,   0, [ 9    ], [27, 32, 35] ],
+    [   "Porygon",      [12    ], 130, 153, 139,   0, [26, 36], [20, 58, 66] ],
+    [   "Omanyte",      [15, 17],  70, 155, 174,  50, [19, 39], [ 3, 10, 62] ],
+    [   "Omastar",      [15, 17], 140, 207, 227,   0, [29, 39], [ 3, 38, 61] ],
+    [   "Kabuto",       [15, 17],  60, 148, 162,  50, [19, 30], [ 3,  4, 62] ],
+    [   "Kabutops",     [15, 17], 120, 220, 203,   0, [13, 19], [ 3, 72, 81] ],
+    [   "Aerodactyl",   [15,  7], 160, 221, 164,   0, [ 2, 34], [ 3, 39, 44] ],
+    [   "Snorlax",      [12    ], 320, 190, 190,   0, [16, 41], [ 7, 26, 39] ],
+    [   "Articuno",     [11,  7], 180, 192, 249,   0, [12    ], [ 6, 41, 43] ],
+    [   "Zapdos",       [ 3,  7], 180, 253, 188,   0, [37    ], [20, 76, 78] ],
+    [   "Moltres",      [ 6,  7], 180, 251, 184,   0, [ 9    ], [27, 32, 35] ],
+    [   "Dratini",      [ 2    ],  82, 119,  94,  25, [ 8,  2], [ 5, 79, 82] ],
+    [   "Dragonair",    [ 2    ], 122, 163, 138, 100, [ 8    ], [ 5, 22, 82] ],
+    [   "Dragonite",    [ 2,  7], 182, 263, 201,   0, [ 8, 34], [21, 22, 39] ],
+    [   "Mewtwo",       [14    ], 212, 330, 200,   0, [ 6, 25], [39, 59, 65] ],
+    [   "Mew",          [14    ], 200, 210, 210,   0, [24    ], [ 6, 22, 26, 27, 39, 59, 70, 76] ]
+];
+const evolveData = [
+//   from  to
+    [  1,   2], [  2,   3],
+    [  4,   5], [  5,   6],
+    [  7,   8], [  8,   9],
+    [ 10,  11], [ 11,  12],
+    [ 13,  14], [ 14,  15],
+    [ 16,  17], [ 17,  18],
+    [ 19,  20],
+    [ 21,  22],
+    [ 23,  24],
+    [ 25,  26],
+    [ 27,  28],
+    [ 29,  30], [ 30,  31],
+    [ 32,  33], [ 33,  34],
+    [ 35,  36],
+    [ 37,  38],
+    [ 39,  40],
+    [ 41,  42],
+    [ 43,  44], [ 44,  45],
+    [ 46,  47],
+    [ 48,  49],
+    [ 50,  51],
+    [ 52,  53],
+    [ 54,  55],
+    [ 56,  57],
+    [ 58,  59],
+    [ 60,  61], [ 61,  62],
+    [ 63,  64], [ 64,  65],
+    [ 66,  67], [ 67,  68],
+    [ 69,  70], [ 70,  71],
+    [ 72,  73],
+    [ 74,  75], [ 75,  76],
+    [ 77,  78],
+    [ 79,  80],
+    [ 81,  82],
+    //83
+    [ 84,  85],
+    [ 86,  87],
+    [ 88,  89],
+    [ 90,  91],
+    [ 92,  93], [ 93,  94],
+    //95
+    [ 96,  97],
+    [ 98,  99],
+    [100, 101],
+    [102, 103],
+    [104, 105],
+    [106, 107],
+    //108
+    [109, 110],
+    [111, 112],
+    //113, 114, 115
+    [116, 117],
+    [118, 119],
+    [120, 121],
+    //122, 123, 124, 125, 126, 127, 128
+    [129, 130],
+    //131, 132
+    [133, 134], [133, 135], [133, 136],
+    //137
+    [138, 139],
+    [140, 141],
+    //142, 143, 144, 145, 146
+    [147, 148], [148, 149]
+    //150, 151
+];
+//------------------------------ CLASSES ------------------------------
+Array.prototype.dupleElem = function()
+{
+    for(var i=0; i<this.length; i++)
+    {
+        for(var j=i+1; j<this.length; j++)
+        {
+            if(this[i] == this[j])
+            {
+                return this[i];
+            }
+        }
+    }
+};
+class type_t
+{
+    constructor(name)
+    {
+        this.name = name;
+        this.effMap = new Map();
+    };
+    setSimpleEffAgainst(type, value)
+    {
+        if(!this.effMap.get(type))
+        {
+            this.effMap.set(type, value);
+        }
+        else
+        {
+            console.log("hiba: " + this.name + " <- " + value + " -> " + type.name);
+        }
+    };
+    effectiveness(types)
+    {
+        //convert to array if needed
+        if(types.constructor !== Array)
+        {
+            types = [types];
+        }
+        
+        var checkDupl = types.dupleElem();
+        if(checkDupl)
+        {
+            console.log("hiba: " + checkDupl.name);
+        }
+        
+        //collect effectivenesses
+        var effs = new Array();
+        for(var i=0; i<types.length; i++)
+        {
+            effs.push(this.effMap.get(types[i]));
+        }
+        
+        //combine efficiences
+        return EFF_COMB(effs);
+    };
+};
+class quickMove_t
+{
+    constructor(name, type, time, attack, energy)
+    {
+        this.name   = name;
+        this.type   = type;
+        this.time   = time;
+        this.attack = attack;
+        this.energy = energy;
+    };
+    dps()
+    {
+        return this.attack/this.time;
+    }
+    d_dps()
+    {
+        return this.attack/(this.time+T_DEFDELAY);
+    }
+};
+class chargeMove_t
+{
+    constructor(name, type, time, attack, energy)
+    {
+        this.name   = name;
+        this.type   = type;
+        this.time   = time;
+        this.attack = attack;
+        this.energy = -(ENERGY_MAX/energy);
+        this.dps    = attack/time;
+    };
+};
+class pokemonSpecie_t
+{
+    //just create an empty object
+    constructor()
+    {
+        this.name               = null;
+        this.types              = [];
+        this.moves = new Object();
+        this.moves.quick        = [];
+        this.moves.charge       = [];
+        this.baseProps = new Object();
+        this.baseProps.attack   = null;
+        this.baseProps.defense  = null;
+        this.baseProps.stamina  = null;
+        this.evolve = new Object();
+        this.evolve.cost        = null;
+        this.evolve.to          = [];
+        this.evolve.from        = [];
+        this.candyType          = null;
+    };
+    //set everything
+    specify(name, types, quickMoves, chargeMoves, baseAttack, baseDefense, baseStamina, evolveCost, evolveFrom, evolveTo, candyType)
+    {
+        this.name               = name;
+        this.types              = types;
+        this.moves.quick        = quickMoves;
+        this.moves.charge       = chargeMoves;
+        this.baseProps.attack   = baseAttack;
+        this.baseProps.defense  = baseDefense;
+        this.baseProps.stamina  = baseStamina;
+        this.evolve.cost        = evolveCost;
+        this.addRegress(evolveFrom);
+        this.addEvolve(evolveTo);
+        this.setCandyType(candyType);
+    };
+    addRegress(specie)
+    {
+        //The data structure makes evolving possible from different species for future compatibility.
+        //  But this solution does not work together with the candy type definition: candy type references the root species of each evolve chain, but
+        //  with this data structure more roots can be present.
+        
+        //convert to array if needed
+        if(specie.constructor !== Array)
+        {
+            specie = [specie];
+        }
+        
+        //extend evolve.from only with not-null elements
+        for(var i=0; i<specie.length; i++)
+        {
+            if( specie[i] && (0 > this.evolve.from.indexOf(specie[i])) )
+            {
+                this.evolve.from.push(specie[i]);
+                //propagate candyType of previous member to this and to all following members in the evolve chain
+                this.setCandyType(specie[i].candyType);
+            }
+        }
+    };
+    addEvolve(specie)
+    {
+        //convert to array if needed
+        if(specie.constructor !== Array)
+        {
+            specie = [specie];
+        }
+        
+        //extend evolve.to only with not-null elements
+        for(var i=0; i<specie.length; i++)
+        {
+            if( specie[i] && (0 > this.evolve.to.indexOf(specie[i])) )
+            {
+                this.evolve.to.push(specie[i]);
+                //propagate candyType to all following members in the evolve chain
+                specie[i].setCandyType(this.candyType);
+            }
+        }
+    };
+    setCandyType(specie)
+    {
+        this.candyType = specie;
+        if( this.candyType && (0 < this.evolve.to.length) )
+        {
+            for(var i=0; i<this.evolve.to.length; i++)
+            {
+                //calling this will result a recursive setting
+                this.evolve.to[i].setCandyType(this.candyType);
+            }
+        }
+        else
+        {
+            //do nothing, probably this is the end of the evolve chain
+        }
+    };
+    checkEvolveIntegrity()
+    {
+        for(var i=0; i<this.evolve.to.length; i++)
+        {
+            if(0 > this.evolve.to[i].evolve.from.indexOf(this))
+            {
+                console.log("hiba: " + this.name + " -> " + this.evolve.to[i].name);
+            }
+        }
+        for(var i=0; i<this.evolve.from.length; i++)
+        {
+            if(0 > this.evolve.from[i].evolve.to.indexOf(this))
+            {
+                console.log("hiba: " + this.name + " <- " + this.evolve.from[i].name);
+            }
+        }
+    };
+};
+class pokemon_t extends pokemonSpecie_t
+{
+    constructor(specie, level, hp, attackIV, defenseIV, staminaIV, quickMove, chargeMove)
+    {
+        //set parent props
+        super();
+        super.specify(specie.name, specie.types, specie.moves.quick, specie.moves.charge, specie.baseProps.attack, specie.baseProps.defense, specie.baseProps.stamina, specie.evolve.cost, specie.evolve.from, specie.evolve.to, specie.candyType);
+        //set level
+        this.level = level;
+        //set IV values
+        this.IV = new Object();
+        if( (IV_MIN <= attackIV) && (attackIV <= IV_MAX) )
+        {
+            this.IV.attack = attackIV;
+        }
+        else
+        {
+            console.log("hiba: " + attackIV);
+        }
+        if( (IV_MIN <= defenseIV) && (defenseIV <= IV_MAX) )
+        {
+            this.IV.defense = defenseIV;
+        }
+        else
+        {
+            console.log("hiba: " + defenseIV);
+        }
+        if( (IV_MIN <= staminaIV) && (staminaIV <= IV_MAX) )
+        {
+            this.IV.stamina = staminaIV;
+        }
+        else
+        {
+            console.log("hiba: " + staminaIV);
+        }
+        //check and set moves
+        this.move = new Object();
+        if(0 <= this.moves.quick.indexOf(quickMove))
+        {
+            this.move.quick = quickMove;
+        }
+        else
+        {
+            console.log("hiba: " + quickMove.name);
+        }
+        if(0 <= this.moves.charge.indexOf(chargeMove))
+        {
+            this.move.charge = chargeMove;
+        }
+        else
+        {
+            console.log("hiba: " + chargeMove.name);
+        }
+        //check and set HP
+        if( (0 <= hp) && (this.getMaxHP() >= hp ) )
+        {
+            this.HP = hp;
+        }
+        else if(0 > hp)
+        {
+            this.HP = this.getMaxHP();
+        }
+        else
+        {
+            console.log("hiba: " + hp + " <-> " + this.HP.max);
+        }
+    };
+    getMaxHP()
+    {
+        return HP_MAX(this.baseProps.stamina, this.IV.stamina, this.level)
+    };
+    getCP()
+    {
+        return CP(this.baseProps.attack, this.baseProps.defense, this.baseProps.stamina, this.IV.attack, this.IV.defense, this.IV.stamina, this.level);
+    };
+    quickAttack(defender)
+    {
+        //just a simple calculation based on effectivenesses
+        //damage = STAB * EFF(att_type, def_type1, def_type2)
+        
+        var STAB_multiplier;
+        if(this.types.indexOf(this.move.quick.type) >= 0)
+        {
+            STAB_multiplier = STAB;
+        }
+        else
+        {
+            STAB_multiplier = 1;
+        }
+        
+        var effectiveness_multiplier = this.move.quick.type.effectiveness(defender.types);
+        
+        return STAB_multiplier * effectiveness_multiplier;
+    }
+    chargeAttack(defender)
+    {
+        //just a simple calculation based on effectivenesses
+        //damage = STAB * EFF(att_type, def_type1, def_type2)
+        
+        var STAB_multiplier;
+        if(this.types.indexOf(this.move.charge.type) >= 0)
+        {
+            STAB_multiplier = STAB;
+        }
+        else
+        {
+            STAB_multiplier = 1;
+        }
+        
+        var effectiveness_multiplier = this.move.charge.type.effectiveness(defender.types);
+        
+        return STAB_multiplier * effectiveness_multiplier;
+    }
+};
+
+//------------------------------ OBJECT INITIALIZERS ------------------------------
+function initTypes(data)
+{
+    var typesArray = new Array();
+    for(var i=0; i<data.length; i++)
+    {
+        typesArray[i] = new type_t(data[i]);
+    }
+
+    for(var i=0; i<typesArray.length; i++)
+    {
+        for(var j=0; j<typesArray.length; j++)
+        {
+            typesArray[i].setSimpleEffAgainst(typesArray[j], SIMPLE_EFF_MULS[effectivenessData[i][j]]);
+        }
+    }
+    
+    return typesArray;
+};
+function initQuickMoves(data, typesReference)
+{
+    var movesArray = new Array();
+    for(var i=0; i<data.length; i++)
+    {
+        movesArray[i] = new quickMove_t(data[i][0], typesReference[data[i][1]], data[i][2], data[i][3], data[i][4]);
+    }
+    return movesArray;
+};
+function initChargeMoves(data, typesReference)
+{
+    var movesArray = new Array();
+    for(var i=0; i<data.length; i++)
+    {
+        movesArray[i] = new chargeMove_t(data[i][0], typesReference[data[i][1]], data[i][3], data[i][6], data[i][2]);
+    }
+    return movesArray;
+};
+function initSpecies(data, evolveData, typesReference, quickMovesReference, chargeMovesReference)
+{
+    var speciesArray = new Array();
+
+    //initialize the array to make possible creating references to each other
+    for(var i=0; i<data.length; i++)
+    {
+        speciesArray[i] = new pokemonSpecie_t();
+    }
+    
+    //set all property (except the link/reference properties: they are just initialized)
+    for(var i=0; i<data.length; i++)
+    {
+        var typesLocal = new Array();
+        var quickMovesLocal = new Array();
+        var chargeMovesLocal = new Array();
+        for(var j=0; j<data[i][1].length; j++)
+        {
+            typesLocal[j] = typesReference[data[i][1][j]];
+        }
+        for(var j=0; j<data[i][6].length; j++)
+        {
+            quickMovesLocal[j] = quickMovesReference[data[i][6][j]];
+        }
+        for(var j=0; j<data[i][7].length; j++)
+        {
+            chargeMovesLocal[j] = chargeMovesReference[data[i][7][j]];
+        }
+        speciesArray[i].specify(data[i][0], typesLocal, quickMovesLocal, chargeMovesLocal, data[i][3], data[i][4], data[i][2], data[i][5], [], [], speciesArray[i]);
+    }
+    
+    //separately set evolving vectors --> creating double linked graph
+    for(var i=0; i<evolveData.length; i++)
+    {
+        speciesArray[evolveData[i][0]].addEvolve( speciesArray[evolveData[i][1]]);
+        speciesArray[evolveData[i][1]].addRegress(speciesArray[evolveData[i][0]]);
+    }
+    //check integrity of the evolve graph
+    for(var i=0; i<speciesArray.length; i++)
+    {
+        speciesArray[i].checkEvolveIntegrity();
+    }
+    
+    return speciesArray;
+};
+
+
+//------------------------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------- IT RUNS AFTER PAGE LOAD ------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------
+$(document).ready( function () {
+//------------------------------ OBJECT CREATION ------------------------------
+var types = initTypes(typesData);
+var quickMoves = initQuickMoves(quickMovesData, types);
+var chargeMoves = initChargeMoves(chargeMovesData, types);
+var species = initSpecies(speciesData, evolveData, types, quickMoves, chargeMoves);
+
+//------------------------------ COMPUTATIONS ------------------------------
+
+//test
+var Bulbasaur = new pokemon_t(species[1], 20, 60, 14, 12, 11, quickMoves[38], chargeMoves[68]);
+console.log(Bulbasaur.getCP());
+/*
+for(var i=1; i<species.length; i++) //go thru all specie, except INVALID
+{
+    if( (species[i].evolve.to.length && (0 < species[i].evolve.to.length) ) ||  //if the actual specie is not a final evolve, skip it
+        (EXCLUDE.indexOf(i) >= 0) ) //if the actual specie is on the exclusions list, skip it
+    {
+        continue;
+    }
+    console.log(species[i].name);
+}*/
+
+//1. create individuals of species with configurable combinations
+var attackers = new Array();
+for(var i=1; i<species.length; i++) //go thru all specie, except INVALID
+{
+    if( (species[i].evolve.to.length && (0 < species[i].evolve.to.length) ) ||  //if the actual specie is not a final evolve, skip it
+        (EXCLUDE.indexOf(i) >= 0) ) //if the actual specie is on the exclusions list, skip it
+    {
+        continue;
+    }
+    
+    //select one best move from the same type moves
+    var quickMoves = new Object();
+    var chargeMoves = new Object();
+    for(var j=0; j<species[i].moves.quick.length; j++)  //thru quick moves --> select best move per type
+    {
+        if(quickMoves[species[i].moves.quick[j].type.name])
+        {
+            if(quickMoves[species[i].moves.quick[j].type.name].attack < species[i].moves.quick[j].attack)   //instead attack, dps can be used to compare moves
+            {
+                quickMoves[species[i].moves.quick[j].type.name] = species[i].moves.quick[j];
+            }
+            else
+            {
+                //do nothing, keep the previous move in the list
+            }
+        }
+        else
+        {
+            quickMoves[species[i].moves.quick[j].type.name] = species[i].moves.quick[j];
+        }
+    }
+    for(var j=0; j<species[i].moves.charge.length; j++)  //thru charge moves --> select best move per type
+    {
+        if(chargeMoves[species[i].moves.charge[j].type.name])
+        {
+            if(chargeMoves[species[i].moves.charge[j].type.name].attack < species[i].moves.charge[j].attack)  //instead attack, dps can be used to compare moves
+            {
+                chargeMoves[species[i].moves.charge[j].type.name] = species[i].moves.charge[j];
+            }
+            else
+            {
+                //do nothing, keep the previous move in the list
+            }
+        }
+        else
+        {
+            chargeMoves[species[i].moves.charge[j].type.name] = species[i].moves.charge[j];
+        }
+    }
+    
+    //create one pokemon for all combinations of selected moves
+    for(var j in quickMoves)
+    {
+        for(var k in chargeMoves)
+        {
+            attackers.push(new pokemon_t(species[i], 27, -1, IV_MAX, IV_MAX, IV_MAX, quickMoves[j], chargeMoves[k])); 
+        }
+    }
+}
+var defenders = new Array();
+//TODO: this just creates a reference to the attackers array, but now it isn't a problem
+defenders = attackers;
+
+//create comparison matrix
+var matrix = new Array();
+for(var i=0; i<attackers.length; i++)
+{
+    matrix[i] = new Array();
+    for(var j=0; j<defenders.length; j++)
+    {
+        var damage_q_att2def = attackers[i].quickAttack(defenders[j]);
+        var damage_q_def2att = defenders[j].quickAttack(attackers[i]);
+        var damage_c_att2def = attackers[i].chargeAttack(defenders[j]);
+        var damage_c_def2att = defenders[j].chargeAttack(attackers[i]);
+        var rat_q = damage_q_att2def/damage_q_def2att;
+        var rat_c = damage_c_att2def/damage_c_def2att;
+        //TODO: how to calculate a simple number based on them?
+        //  the bigger the number, the more effective the attacker
+        //  configurable weight of quick and charge moves
+        matrix[i][j] = new Object();
+        matrix[i][j].value = rat_q<rat_c ? rat_q : rat_c;
+        //matrix[i][j].value = ( rat_q + (CHARGE_IMP*rat_c) ) / (1+CHARGE_IMP);
+        
+        //format number
+        matrix[i][j].value = matrix[i][j].value.toFixed(3);
+    }
+}
+
+//------------------------------ STATISTICS ------------------------------
+//narrow results: select only the best ones for each defender
+//first dimension is attacker, second is defender
+for(var i=0; i<matrix[0].length; i++)  //go through defenders
+{
+    var best = 0;
+    for(var j=0; j<matrix.length; j++)  //go through attackers
+    {
+        //find the place of the biggest number
+        if(matrix[j][i].value > matrix[best][i].value)
+        {
+            best = j;
+        }
+    }
+    
+    //clean up unneeded data
+    for(var j=0; j<matrix.length; j++)  //go through attackers
+    {
+        if(matrix[j][i].value < matrix[best][i].value)
+        {
+            matrix[j][i].flag = 1;  //1 means filtered out because it's not the best attacker agains a specific defender
+        }
+        else
+        {
+            matrix[j][i].flag = 0;
+        }
+    }
+}
+//count unflagged (so the best) results per attacker and per defender
+var numOfDefenders = new Array();
+for(var i=0; i<matrix.length; i++)  //go through attackers
+{
+    var num = 0;
+    for(var j=0; j<matrix[i].length; j++)  //go through defenders
+    {
+        if(1 != matrix[i][j].flag)
+        {
+            num++;
+        }
+    }
+    numOfDefenders.push(num);
+}
+var numOfAttackers = new Array();
+for(var i=0; i<matrix[0].length; i++)  //go through defenders
+{
+    var num = 0;
+    for(var j=0; j<matrix.length; j++)  //go through attackers
+    {
+        if(1 != matrix[j][i].flag)
+        {
+            num++;
+        }
+    }
+    numOfAttackers.push(num);
+}
+
+//------------------------------ FINDING THE BEST COMBINATION ------------------------------
+//This computation is to find the best attacker pokémon collection which is a subset of all pokémon.
+//Theoretically all pokémon is the best collection, practically there is a subjective weighting between amount and combinated power.
+//The following calculation will calculate the combinated power and the best composition for all possible amounts of pokémon and then a subjective decision can be used to select the right amount based on the visualized results
+
+ //kiszámolni, hogy melyik kollekció a legjobb
+ //i=1-tõl 289-ig:
+ //  összes lehetséges kombinációban kiválasztani i-t a 289-bõl
+ //    a kiválasztottaknál átlagolni amik ellen a legjobbak
+ //    átlagolni az átlagokat
+ //  legjobb átlagú kombinációt elmenteni
+ //kiválasztani az elmentett kombinációk közül a legjobbat
+/*
+for(var i=1; i<matrix.length; i++)  //go through all possible amount of selected attackers
+{
+    //select each combination from all possible ones
+    //i=1 -> 1 or 2 or 3 or etc
+    //i=2 -> 1 2 or 1 3 or ... or 288 289
+    //how to generate combinations? recursive function?
+    //number of combinations = (289!/(289-i)!)/i!
+    
+    //generate all possible combinations
+    //TODO: this can be a recursive function, prepare it for that
+    var combos = getAllCombos(matrix.length, i);
+    
+    //go through the generated combinations
+    for(var j=0; j<combos.length; j++)
+    {
+        //for example 3 10 15 is selected
+        //go through all defenders
+        for(var k=0; k<matrix[combos[j][0]].length; k++)
+        {
+            var averages = new Array();
+            
+            //select the biggest attack ratio for each defender which belongs to a member of this specific combination
+            var biggest = 0;
+            for(var l=0; l<combos[j].length; l++)
+            {
+                if(biggest < matrix[combos[j][l]][k])
+                {
+                    biggest = matrix[combos[j][l]][k];
+                }
+                //prepare averages for the next step
+                averages[l] = 0;
+            }
+            
+            //count the average for each attacker
+            //TODO: for the average not only the sum is needed, also a count is needed
+            //TODO: for preciseness, shift rounding from the matrix calculation to the visualization
+            for(var
+            
+        }
+        //go through all attackers in a specific combination
+        for(var k=0; k<combos[j].length; k++)
+        {
+            //one attacker is selected, compute the average for it
+            for(var l=0; l<matrix[combos[j][k]].length; l++)
+            {
+                
+            }
+        }
+    }
+    
+}*/
+
+//------------------------------ VISUALIZATION ------------------------------
+var table = document.getElementById("mainTable");
+var header = document.createElement("thead");
+table.appendChild(header);
+var firstRow = document.createElement('tr');    //contains defenders
+header.appendChild(firstRow);
+var emptyCell = document.createElement('td');
+firstRow.appendChild(emptyCell);    //empty cell on the corner
+
+//create first row with defender info
+for(var i=0; i<defenders.length; i++)
+{
+    var defTypes = "";
+    for(var j=0; j<defenders[i].types.length; j++)
+    {
+        defTypes += defenders[i].types[j].name + "/";
+    }
+    defTypes = defTypes.slice(0, -1);
+    cell = document.createElement('td');
+    cell.innerHTML =    defenders[i].name + /*" (" + defTypes + ")" + */"<br>" +
+                        defenders[i].move.quick.name + " (" + defenders[i].move.quick.type.name + ")<br>" +
+                        defenders[i].move.charge.name + " (" + defenders[i].move.charge.type.name + ")<br>" +
+                        numOfAttackers[i];
+    firstRow.appendChild(cell);
+}
+
+//create following rows
+for(var i=0; i<attackers.length; i++)
+{
+    if(0 < numOfDefenders[i])
+    {
+        var row = document.createElement('tr');
+        //first cell is the attacker info
+        var attTypes = "";
+        for(var j=0; j<attackers[i].types.length; j++)
+        {
+            attTypes += attackers[i].types[j].name + "/";
+        }
+        attTypes = attTypes.slice(0, -1);
+        cell = document.createElement('td');
+        cell.innerHTML =    attackers[i].name + /*" (" + attTypes + ")" + */"<br>" +
+                            attackers[i].move.quick.name + " (" + attackers[i].move.quick.type.name + ")<br>" +
+                            attackers[i].move.charge.name + " (" + attackers[i].move.charge.type.name + ")<br>" +
+                            numOfDefenders[i];
+        row.appendChild(cell);
+        
+        //data
+        for(var j=0; j<defenders.length; j++)
+        {
+            cell2 = document.createElement('td');
+            if(1 == matrix[i][j].flag)
+            {
+                cell2.setAttribute("style", "color: #e0e0e0;");
+            }
+            cell2.innerHTML = matrix[i][j].value;
+            row.appendChild(cell2);
+        }
+        
+        table.appendChild(row);
+    }
+}
+
+//DataTable library is used to make the big table scrollable with the first row and column locked
+$('#mainTable').DataTable( {
+    "paging":   false,
+    "ordering": false,
+    "info":     false,
+    "searching": false,
+    scrollY:        800,
+    scrollX:        true,
+    scrollCollapse: true,
+    fixedColumns: {
+        heightMatch: 'auto'
+    }
+} );
+
+//------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------- CYCLICALLY RUNNING PART -------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------
+//The big computations can freeze the page, so they will be performed asynchronously: a timer can run in a separate thread than the
+//main page, this will be used to create a separate cyclic "task" in the background. The 'for' loops are decomposed and only one 'for'
+//cycle is executed in a timer cycle. Warning: for cycles originally ran after each other cannot be paralellized inside the timer
+//loop, because the next depends on the results of the previous one. That's why the step#ready variables are created.
+//TODO: it is possible to decompose nested fors if needed
+//TODO: shift all computations here
+const CYCLETIME = 1;    //1ms is impossible for the browser, practically it means "run as fast as possible"
+global.tick = 0;
+global.task = 0;
+global.mainTask = null; //the ID for the timer will be stored here
+//This trick enables to call a function ('start()' and 'stop()') without "()". Then it's easy to write commands in the console
+Object.defineProperty(global, "start", { get: function() {
+    mainTask = setInterval(mainTaskFunction, CYCLETIME);
+    return mainTask;
+} } );
+Object.defineProperty(global, "stop", { get: function() { clearInterval(mainTask); return mainTask; } } );
+Object.defineProperty(global, "reset", { get: function() { stop; tick=0; task=0; pi=0; return mainTask; } } );  //TODO: reset/reinit all globals
+Object.defineProperty(global, "restart", { get: function() {
+    reset;
+    return start;
+} } );
+
+global.pi = 0;
+mainTaskFunction = function()
+{
+    //it equals to for(var i=1; i<10000; i++)
+    if(0==task){if(tick<1){}else if(tick < 10000)
+    {
+        pi += (4*Math.pow(-1, tick+1))/(2*tick-1);
+        document.getElementById("test").innerHTML = pi;
+    }
+    else{task++;tick=0;}}
+    
+    tick++;
+}
+
+restart;
+} );    //end of ready event handler
+</script>
+
+<style>
+table {
+    border: 1px solid black;
+    border-spacing: 0; /* Removes the cell spacing via CSS */
+    border-collapse: collapse;  /* Optional - if you don't want to have double border where cells touch */
+}
+td {
+    border: 1px solid black;
+    /*padding: 3px;*/
+    white-space: nowrap;
+    /*font-size: 12px;*/
+    background-color: white;
+}
+div.DTFC_LeftBodyLiner {
+    border-right: 1px solid black;
+    overflow-x: hidden;
+}
+</style>
+</head>
+<body>
+
+PokéCalc (védekezõ fönn, támadó lenn)<br><br>
+<div id="test"></div>
+
+<table id="mainTable"></table>
+
+</body>
+</html>
