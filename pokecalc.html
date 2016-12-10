@@ -1,15 +1,14 @@
 <html>
 <head>
 
-<link rel="stylesheet" type="text/css" href="DataTables-1.10.12/css/jquery.dataTables.css"/>
-<link rel="stylesheet" type="text/css" href="FixedColumns-3.2.2/css/fixedColumns.dataTables.css"/>
-<!-- <link rel="stylesheet" type="text/css" href="FixedHeader-3.1.2/css/fixedHeader.dataTables.css"/> -->
-<link rel="stylesheet" type="text/css" href="Select-1.2.0/css/select.dataTables.css"/>
-<script type="text/javascript" src="jQuery-2.2.3/jquery-2.2.3.js"></script>
-<script type="text/javascript" src="DataTables-1.10.12/js/jquery.dataTables.js"></script>
-<script type="text/javascript" src="FixedColumns-3.2.2/js/dataTables.fixedColumns.js"></script>
-<!-- <script type="text/javascript" src="FixedHeader-3.1.2/js/dataTables.fixedHeader.js"></script> -->
-<script type="text/javascript" src="Select-1.2.0/js/dataTables.select.js"></script>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.13/css/jquery.dataTables.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/fixedcolumns/3.2.2/css/fixedColumns.dataTables.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/select/1.2.1/css/select.dataTables.min.css"/>
+
+<script type="text/javascript" src="https://code.jquery.com/jquery-2.2.3.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/1.10.13/js/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/fixedcolumns/3.2.2/js/dataTables.fixedColumns.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/select/1.2.1/js/dataTables.select.min.js"></script>
 
 <script type="text/javascript">
 //Use object-oriented programming, create classes (see http://es6-features.org/#ClassDefinition):
@@ -61,14 +60,22 @@
 //- filtering to make table smaller
 //- smartphone-optimized
 
+/*
+using git:
+git add -A                  // To track all files
+git commit -am "message"    // To commit changes
+git push origin master      // Push your local changes to github
+practically I need only these:
+git commit -am "message"
+git push
+*/
+
 const global = window;
 //------------------------------ CONSTANTS ------------------------------
 //this detailed parametrization enables broad customization, it prepares the algorithms for future changes in Pokemon Go
 //placing functions here means that the calculations represented by each function are locked for a specific release, but they can be easily changed if something changes in Pokemon Go
 
 //parameters step 1: these parameters are only to generate the usable parameters
-const _MULTIPLIER_BASE = 1.25;
-const _EFF_MUL = _MULTIPLIER_BASE;
 //CP multiplier data
 const _CPMData = [
     0.094     , //1
@@ -130,13 +137,14 @@ function _CPM(level)
 const _CP_MIN = 10;
 
 //parameters step 2a: these calculated ones can be used for serious calculations
-const STAB = _MULTIPLIER_BASE;
+const MULTIPLIER_BASE = 1.25;
+const STAB_POW = 1;
 //effectiveness multipliers
-const SIMPLE_EFF_MULS = [
-    1/_EFF_MUL, // 0 no effect
-    1/_EFF_MUL, // 1 ineffective
-    1,          // 2 normal
-    _EFF_MUL    // 3 effective
+const SIMPLE_EFF_POWS = [
+    -1, // 0 no effect
+    -1, // 1 ineffective
+    0,  // 2 normal
+    1   // 3 effective
 ];
 //exclude these species from every calculation
 const EXCLUDE = [
@@ -157,18 +165,18 @@ const T_DEFDELAY = 2; //the defending pokémon in the gym automatically waits 2s
 const CHARGE_IMP = 1;   //charge move effectiveness importance during comparisons relative to quick move effectiveness
 
 //parameters step 2b: configurable calculations
-function EFF_COMB(effs) //combine type efficiences (in case of dual types)
+function EFF_COMB(pows) //combine type efficiency powers (in case of dual types)
 {
     //convert to array if needed
-    if(effs.constructor !== Array)
+    if(pows.constructor !== Array)
     {
-        effs = [effs];
+        pows = [pows];
     }
     
-    var result = 1;
-    for(var i = 0; i<effs.length; i++)
+    var result = 0;
+    for(var i = 0; i<pows.length; i++)
     {
-        result *= effs[i];
+        result += pows[i];
     }
     return result;
 }
@@ -211,7 +219,7 @@ const typesData = [
     "Water"     // 17
 ];
 const effectivenessData = [
-//for the meaning of numbers below see _SIMPLE_EFF_MULS array
+//for the meaning of numbers below see SIMPLE_EFF_POWS array
 //DEF:  bug dar dra ele fai fig fir fly gho gra gro ice nor poi psy roc ste wat    // ATT
     [   2,  3,  2,  2,  1,  1,  1,  1,  1,  3,  2,  2,  2,  1,  3,  2,  1,  2   ], // bug
     [   2,  1,  2,  2,  1,  1,  2,  2,  3,  2,  2,  2,  2,  2,  3,  2,  2,  2   ], // dar
@@ -634,14 +642,14 @@ class type_t
         }
         
         //collect effectivenesses
-        var effs = new Array();
+        var pows = new Array();
         for(var i=0; i<types.length; i++)
         {
-            effs.push(this.effMap.get(types[i]));
+            pows.push(this.effMap.get(types[i]));
         }
         
         //combine efficiences
-        return EFF_COMB(effs);
+        return EFF_COMB(pows);
     };
 };
 class quickMove_t
@@ -866,38 +874,46 @@ class pokemon_t extends pokemonSpecie_t
         //just a simple calculation based on effectivenesses
         //damage = STAB * EFF(att_type, def_type1, def_type2)
         
-        var STAB_multiplier;
+        var STAB_multiplier_pow;
         if(this.types.indexOf(this.move.quick.type) >= 0)
         {
-            STAB_multiplier = STAB;
+            STAB_multiplier_pow = STAB_POW;
         }
         else
         {
-            STAB_multiplier = 1;
+            STAB_multiplier_pow = 0;
         }
         
-        var effectiveness_multiplier = this.move.quick.type.effectiveness(defender.types);
+        var effectiveness_multiplier_pow = this.move.quick.type.effectiveness(defender.types);
         
-        return STAB_multiplier * effectiveness_multiplier;
+        //As long as the attack multipilers are powers (both negative and positive) of a common multiplier, it's enough to use those
+        //  powers instead of the combined multipliers. Then the attack ratio will be calculated as a difference not as a division.
+        //  This has positive effect on average calculation.
+        //return Math.pow(MULTIPLIER_BASE, STAB_multiplier_pow + effectiveness_multiplier_pow);
+        return STAB_multiplier_pow + effectiveness_multiplier_pow;
     }
     chargeAttack(defender)
     {
         //just a simple calculation based on effectivenesses
         //damage = STAB * EFF(att_type, def_type1, def_type2)
         
-        var STAB_multiplier;
+        var STAB_multiplier_pow;
         if(this.types.indexOf(this.move.charge.type) >= 0)
         {
-            STAB_multiplier = STAB;
+            STAB_multiplier_pow = STAB_POW;
         }
         else
         {
-            STAB_multiplier = 1;
+            STAB_multiplier_pow = 0;
         }
         
-        var effectiveness_multiplier = this.move.charge.type.effectiveness(defender.types);
+        var effectiveness_multiplier_pow = this.move.charge.type.effectiveness(defender.types);
         
-        return STAB_multiplier * effectiveness_multiplier;
+        //As long as the attack multipilers are powers (both negative and positive) of a common multiplier, it's enough to use those
+        //  powers instead of the combined multipliers. Then the attack ratio will be calculated as a difference not as a division.
+        //  This has positive effect on average calculation.
+        //return Math.pow(MULTIPLIER_BASE, STAB_multiplier_pow + effectiveness_multiplier_pow);
+        return STAB_multiplier_pow + effectiveness_multiplier_pow;
     }
 };
 
@@ -914,7 +930,7 @@ function initTypes(data)
     {
         for(var j=0; j<typesArray.length; j++)
         {
-            typesArray[i].setSimpleEffAgainst(typesArray[j], SIMPLE_EFF_MULS[effectivenessData[i][j]]);
+            typesArray[i].setSimpleEffAgainst(typesArray[j], SIMPLE_EFF_POWS[effectivenessData[i][j]]);
         }
     }
     
@@ -1081,21 +1097,21 @@ for(var i=0; i<attackers.length; i++)
     matrix[i] = new Array();
     for(var j=0; j<defenders.length; j++)
     {
+        //As long as the attack multipilers are powers (both negative and positive) of a common multiplier, it's enough to use those
+        //  powers instead of the combined multipliers. Then the attack ratio will be calculated as a difference not as a division.
+        //  This has positive effect on average calculation.
         var damage_q_att2def = attackers[i].quickAttack(defenders[j]);
         var damage_q_def2att = defenders[j].quickAttack(attackers[i]);
         var damage_c_att2def = attackers[i].chargeAttack(defenders[j]);
         var damage_c_def2att = defenders[j].chargeAttack(attackers[i]);
-        var rat_q = damage_q_att2def/damage_q_def2att;
-        var rat_c = damage_c_att2def/damage_c_def2att;
+        var rat_q = damage_q_att2def - damage_q_def2att;
+        var rat_c = damage_c_att2def - damage_c_def2att;
         //TODO: how to calculate a simple number based on them?
         //  the bigger the number, the more effective the attacker
         //  configurable weight of quick and charge moves
         matrix[i][j] = new Object();
         matrix[i][j].value = rat_q<rat_c ? rat_q : rat_c;
         //matrix[i][j].value = ( rat_q + (CHARGE_IMP*rat_c) ) / (1+CHARGE_IMP);
-        
-        //format number
-        matrix[i][j].value = matrix[i][j].value.toFixed(3);
     }
 }
 
@@ -1160,13 +1176,13 @@ for(var i=0; i<matrix[0].length; i++)  //go through defenders
 //Theoretically all pokémon is the best collection, practically there is a subjective weighting between amount and combinated power.
 //The following calculation will calculate the combinated power and the best composition for all possible amounts of pokémon and then a subjective decision can be used to select the right amount based on the visualized results
 
- //kiszámolni, hogy melyik kollekció a legjobb
- //i=1-tõl 289-ig:
- //  összes lehetséges kombinációban kiválasztani i-t a 289-bõl
- //    a kiválasztottaknál átlagolni amik ellen a legjobbak
- //    átlagolni az átlagokat
- //  legjobb átlagú kombinációt elmenteni
- //kiválasztani az elmentett kombinációk közül a legjobbat
+ //calculate the best collection
+ //i=1 to 289
+ //  select i element from 289 in all possible combinations
+ //    average each combination's effectivenesses against which are they the best
+ //    avarage the averages
+ //  store the combination with the best overall average
+ //select the best from the stored ones
 /*
 for(var i=1; i<matrix.length; i++)  //go through all possible amount of selected attackers
 {
@@ -1309,17 +1325,12 @@ const CYCLETIME = 1;    //1ms is impossible for the browser, practically it mean
 global.tick = 0;
 global.task = 0;
 global.mainTask = null; //the ID for the timer will be stored here
+
 //This trick enables to call a function ('start()' and 'stop()') without "()". Then it's easy to write commands in the console
-Object.defineProperty(global, "start", { get: function() {
-    mainTask = setInterval(mainTaskFunction, CYCLETIME);
-    return mainTask;
-} } );
-Object.defineProperty(global, "stop", { get: function() { clearInterval(mainTask); return mainTask; } } );
-Object.defineProperty(global, "reset", { get: function() { stop; tick=0; task=0; pi=0; return mainTask; } } );  //TODO: reset/reinit all globals
-Object.defineProperty(global, "restart", { get: function() {
-    reset;
-    return start;
-} } );
+Object.defineProperty(global, "start",   { get: function() { mainTask = setInterval(mainTaskFunction, CYCLETIME); return mainTask; } } );
+Object.defineProperty(global, "stop",    { get: function() { clearInterval(mainTask);                             return mainTask; } } );
+Object.defineProperty(global, "reset",   { get: function() { stop; tick=0; task=0; pi=0;                          return mainTask; } } );  //TODO: reset/reinit all globals
+Object.defineProperty(global, "restart", { get: function() { reset; start;                                        return mainTask; } } );
 
 global.pi = 0;
 mainTaskFunction = function()
@@ -1360,7 +1371,7 @@ div.DTFC_LeftBodyLiner {
 </head>
 <body>
 
-PokéCalc (védekezõ fönn, támadó lenn)<br><br>
+PokéCalc (defenders above, attackers below)<br><br>
 <div id="test"></div>
 
 <table id="mainTable"></table>
