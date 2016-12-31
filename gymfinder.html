@@ -9,27 +9,27 @@
 <script type="text/javascript" src="https://cdn.datatables.net/1.10.13/js/jquery.dataTables.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/fixedcolumns/3.2.2/js/dataTables.fixedColumns.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/select/1.2.1/js/dataTables.select.min.js"></script>
-<script type="text/javascript" src="gymData.json"></script>
+<script type="text/javascript" src="https://rawgit.com/kondenzator/PokeCalc/master/gymData.json"></script>
 
 <script type="text/javascript">
 /*
-egym·shoz legkˆzelebb lÈvı 10 gym megtal·l·sa Budapesten
+egym√°shoz legk√∂zelebb l√©v√µ 10 gym megtal√°l√°sa Budapesten
 
-egym·shoz legkˆzelebb lÈvı = function value(set a)
+egym√°shoz legk√∂zelebb l√©v√µ = function value(set a)
 10 = k
-megtal·l·sa = compare(set a, set b)
-Budapesten = adatb·zis, gymek sz·ma = n
+megtal√°l√°sa = compare(set a, set b)
+Budapesten = adatb√°zis, gymek sz√°ma = n
 
-adatb·zis forr·sok:
+adatb√°zis forr√°sok:
 https://www.reddit.com/r/pokemongodev/comments/4xp2n7/can_you_export_pokestops_and_gym_locations_from/
 https://www.reddit.com/r/pokemongodev/comments/4z74nx/does_anyone_have_a_downloadable_database_for_all/?sort=new
 https://www.reddit.com/r/pokemongodev/comments/5grpfd/how_to_get_list_of_gym_coordinates_for_my_city/
-˙gy t˚nik, hogy csak a www.pokemongomap.info-bÛl tudom kinyerni az adatot:
-1. XmlHttpRequest-eket begy˚jteni --> JSON adathalmaz
-2. elıfeldolgozni: a fˆlˆsleges sorokat kiszedni, Èrtelmes nevet adni az attrib˙tumoknak
-3. felhaszn·l·skor base64 dekÛdolni a koordin·t·kat
+√∫gy t√ªnik, hogy csak a www.pokemongomap.info-b√≥l tudom kinyerni az adatot:
+1. XmlHttpRequest-eket begy√ªjteni --> JSON adathalmaz
+2. el√µfeldolgozni: a f√∂l√∂sleges sorokat kiszedni, √©rtelmes nevet adni az attrib√∫tumoknak
+3. felhaszn√°l√°skor base64 dek√≥dolni a koordin√°t√°kat
 
-kombin·ciÛs sz·mrendszerek:
+kombin√°ci√≥s sz√°mrendszerek:
 https://en.wikipedia.org/wiki/Combinatorial_number_system
 http://mathoverflow.net/questions/29942/order-of-a-combination-when-mapping-them-to-whole-numbers
 https://computationalcombinatorics.wordpress.com/2012/09/10/ranking-and-unranking-of-combinations-and-permutations/
