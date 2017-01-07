@@ -9,13 +9,13 @@
 <script type="text/javascript" src="https://cdn.datatables.net/1.10.13/js/jquery.dataTables.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/fixedcolumns/3.2.2/js/dataTables.fixedColumns.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/select/1.2.1/js/dataTables.select.min.js"></script>
-<script type="text/javascript" src="https://rawgit.com/kondenzator/PokeCalc/master/gymData.json"></script>
+<script type="text/javascript" src="gymData.json"></script>
 
 <script type="text/javascript">
 /*
-egymáshoz legközelebb lévõ 10 gym megtalálása Budapesten
+egymáshoz legközelebb lévő 10 gym megtalálása Budapesten
 
-egymáshoz legközelebb lévõ = function value(set a)
+egymáshoz legközelebb lévő = function value(set a)
 10 = k
 megtalálása = compare(set a, set b)
 Budapesten = adatbázis, gymek száma = n
@@ -24,9 +24,9 @@ adatbázis források:
 https://www.reddit.com/r/pokemongodev/comments/4xp2n7/can_you_export_pokestops_and_gym_locations_from/
 https://www.reddit.com/r/pokemongodev/comments/4z74nx/does_anyone_have_a_downloadable_database_for_all/?sort=new
 https://www.reddit.com/r/pokemongodev/comments/5grpfd/how_to_get_list_of_gym_coordinates_for_my_city/
-úgy tûnik, hogy csak a www.pokemongomap.info-ból tudom kinyerni az adatot:
-1. XmlHttpRequest-eket begyûjteni --> JSON adathalmaz
-2. elõfeldolgozni: a fölösleges sorokat kiszedni, értelmes nevet adni az attribútumoknak
+úgy tűnik, hogy csak a www.pokemongomap.info-ból tudom kinyerni az adatot:
+1. XmlHttpRequest-eket begyűjteni --> JSON adathalmaz
+2. előfeldolgozni: a fölösleges sorokat kiszedni, értelmes nevet adni az attribútumoknak
 3. felhasználáskor base64 dekódolni a koordinátákat
 
 kombinációs számrendszerek:
@@ -39,6 +39,10 @@ https://computationalcombinatorics.wordpress.com/2012/09/10/ranking-and-unrankin
 const global = window;
 const subArea = 50;
 const numOfGyms = 10;
+const maxGyms = 450;
+const pointSizePx = 3;    //in px, later scaled
+var pointSize = 0;
+const binSearchStepThreshold = 15;
 
 //------------------------------ HELPER FUNCS ------------------------------
 function fact(n)
@@ -64,142 +68,189 @@ function binom(n, k)
     }
 }
 
+function drawX(x, y, canvas)
+{
+    if(x.constructor === Array)
+    {
+        canvas = y;
+        y = x[1];
+        x = x[0];
+    }
+    else
+    {
+        // do nothing
+    }
+    
+    //draw an 'X' on the point
+    canvas.beginPath();
+    canvas.moveTo(x-pointSize, y-pointSize);
+    canvas.lineTo(x+pointSize, y+pointSize);
+    canvas.moveTo(x-pointSize, y+pointSize);
+    canvas.lineTo(x+pointSize, y-pointSize);
+    canvas.stroke();
+}
+function drawO(x, y, canvas)
+{
+    if(x.constructor === Array)
+    {
+        canvas = y;
+        y = x[1];
+        x = x[0];
+    }
+    else
+    {
+        // do nothing
+    }
+    
+    //draw an 'X' on the point
+    canvas.beginPath();
+    canvas.arc(x, y, pointSize, 0, 2*Math.PI);
+    canvas.stroke();
+}
+//first horizontal line x, y1, y2, then vertical line x1, x2, y
+//this function doesn't support arrays as coordinates
+function linesIntersect(h_x1, h_x2, h_y, v_x, v_y1, v_y2)
+{
+    //if an end point of one line is on the other line, it doesn't count
+    if( (h_x1 < v_x) && (v_x < h_x2) && (v_y1 < h_y) && (h_y < v_y2) )
+    {
+        return [v_x, h_y];
+    }
+    else
+    {
+        //return absolutely nothing
+    }
+}
+Array.prototype.push2 = function(a)
+{
+    if( (null != a) && (undefined != a) )
+    {
+        this.push(a);
+    }
+    else
+    {
+        //do nothing
+    }
+}
+
 //------------------------------ CLASSES ------------------------------
 class Rectangle
 {
-    constructor(x1, y1, x2, y2)
+    //parameters are: X and Y coordinates of the lower left corner, then X and Y for the higher right corner
+    constructor(x1, y1, x2, y2, canvas)
     {
         //handle other coordinate-representation
         if( (x1.constructor === Array) && (y1.constructor === Array) )
         {
-            var x1temp = x1[0];
-            var y1temp = x1[1];
-            var x2temp = y1[0];
-            var y2temp = y1[1];
-            x1 = x1temp;
-            y1 = y1temp;
-            x2 = x2temp;
-            y2 = y2temp;
+            y2 = y1[1];
+            x2 = y1[0];
+            y1 = x1[1];
+            x1 = x1[0];
         }
         else
         {
             //do nothing
         }
-        
-        //make coordinates integers in a way that the exact rectangle can fit into the "rounded" one
-        if(x1 < x2)
+        //check if the right corner coordinates were given
+        if(x1 > x2)
         {
-            this.x1 = Math.floor(x1);
-            this.x2 = Math.ceil(x2);
+            this.x1 = x2;
+            this.x2 = x1;
         }
         else
         {
-            this.x1 = Math.floor(x2);
-            this.x2 = Math.ceil(x1);
+            this.x1 = x1;
+            this.x2 = x2;
         }
         
-        if(y1 < y2)
+        if(y1 > y2)
         {
-            this.y1 = Math.floor(y1);
-            this.y2 = Math.ceil(y2);
+            this.y1 = y2;
+            this.y2 = y1;
         }
         else
         {
-            this.y1 = Math.floor(y2);
-            this.y2 = Math.ceil(y1);
+            this.y1 = y1;
+            this.y2 = y2;
         }
+        
+        //draw the rectangle on the referenced canvas (layer)
+        this.draw(canvas);
     };
-    checkPoint(x, y)
+    draw(canvas)
     {
+        //(re)draw the rectangle on the referenced canvas (layer)
+        canvas.strokeRect(this.x1,this.y1,this.x2-this.x1,this.y2-this.y1);
+    };
+    //check is a point is inside of the rectangle
+    //a point near/on the edge is handled differently in different situations, this function should solve all needs
+    //the solution is to return smallest distance from the rectangle edges. Positive number means that the point is inside the rectangle, negative means that it's outside and 0 means that it is on an edge.
+    //it can check also lines (when only x or y coordinate is passed)
+    //equation should be never checked because it's working with floating point numbers
+    pointIsInside(x, y)
+    {
+        var disty = Infinity;
+        var distx = Infinity;
+        
         //handle other coordinate-representation
-        if(x.constructor === Array)
+        if((null != x) && (x.constructor === Array))
         {
-            var xtemp = x[0];
-            var ytemp = x[1];
-            x = xtemp;
-            y = ytemp;
-        }
-        else
-        {
-            //do nothing
+            y = x[1];
+            x = x[0];
         }
         
-        //it can check also lines (when only x or y coordinate is passed)
-        if( (null != x) && (null != y) )
+        if(null != y)
         {
-            var xc = Math.ceil(x);
-            var yc = Math.ceil(y);
-            var xf = Math.floor(x);
-            var yf = Math.floor(y);
-            
-            if( (xc > this.x1) && (xf > this.x1) && (xc < this.x2) && (xf < this.x2) &&
-                (yc > this.y1) && (yf > this.y1) && (yc < this.y2) && (yf < this.y2) )
+            var dist1 = y - this.y1;
+            var dist2 = this.y2 - y;
+            if(Math.abs(dist1) < Math.abs(dist2))
             {
-                //point is inside the rectangle
-                return 1;
-            }
-            else if( ( (xc < this.x1) && (xf < this.x1) ) || ( (xc > this.x2) && (xf > this.x2) ) ||
-                     ( (yc < this.y1) && (yf < this.y1) ) || ( (yc > this.y2) && (yf > this.y2) ) )
-            {
-                //point is outside of the rectangle
-                return -1;
+                disty = dist1;
             }
             else
             {
-                //point is on the edge
-                return 0;
+                disty = dist2;
             }
         }
-        else if(null != x)
+        
+        if(null != x)
         {
-            var xc = Math.ceil(x);
-            var xf = Math.floor(x);
-            
-            if( (xc > this.x1) && (xf > this.x1) && (xc < this.x2) && (xf < this.x2) )
+            var dist1 = x - this.x1;
+            var dist2 = this.x2 - x;
+            if(Math.abs(dist1) < Math.abs(dist2))
             {
-                //line crosses the rectangle
-                return 1;
-            }
-            else if( ( (xc < this.x1) && (xf < this.x1) ) || ( (xc > this.x2) && (xf > this.x2) ) )
-            {
-                //line is outside of the rectangle
-                return -1;
+                distx = dist1;
             }
             else
             {
-                //line is on an edge
-                return 0;
+                distx = dist2;
             }
         }
-        else if(null != y)
+        
+        if(distx < disty)
         {
-            var yc = Math.ceil(y);
-            var yf = Math.floor(y);
-            
-            if( (yc > this.y1) && (yf > this.y1) && (yc < this.y2) && (yf < this.y2) )
-            {
-                //line crosses the rectangle
-                return 1;
-            }
-            else if( ( (yc < this.y1) && (yf < this.y1) ) || ( (yc > this.y2) && (yf > this.y2) ) )
-            {
-                //line is outside of the rectangle
-                return -1;
-            }
-            else
-            {
-                //line is on an edge
-                return 0;
-            }
+            return distx;
         }
         else
         {
-            //both parameters are null
-            return null;
+            return disty;
         }
     }
+    getCorners()
+    {
+        var corners = new Array();
+        //corner order is important: start with smaller x and smaller y and make a round counter-clockwise
+        //lower left, lower right, upper right, upper left
+        corners.push([this.x1, this.y1]);
+        corners.push([this.x2, this.y1]);
+        corners.push([this.x2, this.y2]);
+        corners.push([this.x1, this.y2]);
+        return corners;
+    }
+    //find intersect points of two rectangles
     getIntersect(rect2)
     {
+        
         var res = new Array();
         
         //two rectangles can have
@@ -207,170 +258,23 @@ class Rectangle
         //- common corners
         //- no intersections because one is inside the other
         //- no intersections because one is outside the other
-        //- 2 intersection points
-        //- 4 intersection points
+        //- 2 intersection points on the same edge
+        //- 2 intersection points on two edges of a corner
+        //- 2 intersection points on opposite edges
+        //- 4 intersection points on opposite edges
+        //corner of one rectangle being on edge/corner of other rectangle is not considered as an intersection, because corners of both rectangles are
+        //  considered separately by the user algorithm
         
-        //common edges and corners are not considered as intersections
-        if(1 == this.checkPoint(rect2.x1, null))
-        {
-            var p1 = new Array();
-            var p2 = new Array();
-            
-            if( (-1 == this.checkPoint(null, rect2.y1)) &&
-                (1 == this.checkPoint(null, rect2.y2)) )
-            {
-                p1.push(rect2.x1);
-                p1.push(this.y1);
-                res.push(p1);
-            }
-            else if( (1 == this.checkPoint(null, rect2.y1)) &&
-                     (-1 == this.checkPoint(null, rect2.y2)) )
-            {
-                p1.push(rect2.x1);
-                p1.push(this.y2);
-                res.push(p1);
-            }
-            else if( (-1 == this.checkPoint(null, rect2.y1)) &&
-                     (-1 == this.checkPoint(null, rect2.y2)) &&
-                     (1 == this.checkPoint(null, (rect2.y1+rect.y2)/2)) )
-            {
-                p1.push(rect2.x1);
-                p1.push(this.y1);
-                res.push(p1);
-                p2.push(rect2.x1);
-                p2.push(this.y2);
-                res.push(p2);
-            }
-            else
-            {
-                //do nothing, this edge has no intersection with the other rectangle
-            }
-        }
-        else
-        {
-            //do nothing, this edge has no intersection with the other rectangle
-        }
-        
-        if(1 == this.checkPoint(rect2.x2, null))
-        {
-            var p1 = new Array();
-            var p2 = new Array();
-            
-            if( (-1 == this.checkPoint(null, rect2.y1)) &&
-                (1 == this.checkPoint(null, rect2.y2)) )
-            {
-                p1.push(rect2.x2);
-                p1.push(this.y1);
-                res.push(p1);
-            }
-            else if( (1 == this.checkPoint(null, rect2.y1)) &&
-                     (-1 == this.checkPoint(null, rect2.y2)) )
-            {
-                p1.push(rect2.x2);
-                p1.push(this.y2);
-                res.push(p1);
-            }
-            else if( (-1 == this.checkPoint(null, rect2.y1)) &&
-                     (-1 == this.checkPoint(null, rect2.y2)) &&
-                     (1 == this.checkPoint(null, (rect2.y1+rect.y2)/2)) )
-            {
-                p1.push(rect2.x2);
-                p1.push(this.y1);
-                res.push(p1);
-                p2.push(rect2.x2);
-                p2.push(this.y2);
-                res.push(p2);
-            }
-            else
-            {
-                //do nothing, this edge has no intersection with the other rectangle
-            }
-        }
-        else
-        {
-            //do nothing, this edge has no intersection with the other rectangle
-        }
-        
-        if(1 == this.checkPoint(null, rect2.y1))
-        {
-            var p1 = new Array();
-            var p2 = new Array();
-            
-            if( (-1 == this.checkPoint(rect2.x1, null)) &&
-                (1 == this.checkPoint(rect2.x2, null)) )
-            {
-                p1.push(this.x1);
-                p1.push(rect2.y1);
-                res.push(p1);
-            }
-            else if( (1 == this.checkPoint(rect2.x1, null)) &&
-                     (-1 == this.checkPoint(rect2.x2, null)) )
-            {
-                p1.push(this.x2);
-                p1.push(rect2.y1);
-                res.push(p1);
-            }
-            else if( (-1 == this.checkPoint(rect2.x1, null)) &&
-                     (-1 == this.checkPoint(rect2.x2, null)) &&
-                     (1 == this.checkPoint((rect2.x1+rect.x2)/2, null)) )
-            {
-                p1.push(this.x1);
-                p1.push(rect2.y1);
-                res.push(p1);
-                p2.push(this.x2);
-                p2.push(rect2.y1);
-                res.push(p2);
-            }
-            else
-            {
-                //do nothing, this edge has no intersection with the other rectangle
-            }
-        }
-        else
-        {
-            //do nothing, this edge has no intersection with the other rectangle
-        }
-        
-        if(1 == this.checkPoint(null, rect2.y2))
-        {
-            var p1 = new Array();
-            var p2 = new Array();
-            
-            if( (-1 == this.checkPoint(rect2.x1, null)) &&
-                (1 == this.checkPoint(rect2.x2, null)) )
-            {
-                p1.push(this.x1);
-                p1.push(rect2.y2);
-                res.push(p1);
-            }
-            else if( (1 == this.checkPoint(rect2.x1, null)) &&
-                     (-1 == this.checkPoint(rect2.x2, null)) )
-            {
-                p1.push(this.x2);
-                p1.push(rect2.y2);
-                res.push(p1);
-            }
-            else if( (-1 == this.checkPoint(rect2.x1, null)) &&
-                     (-1 == this.checkPoint(rect2.x2, null)) &&
-                     (1 == this.checkPoint((rect2.x1+rect.x2)/2, null)) )
-            {
-                p1.push(this.x1);
-                p1.push(rect2.y2);
-                res.push(p1);
-                p2.push(this.x2);
-                p2.push(rect2.y2);
-                res.push(p2);
-            }
-            else
-            {
-                //do nothing, this edge has no intersection with the other rectangle
-            }
-        }
-        else
-        {
-            //do nothing, this edge has no intersection with the other rectangle
-        }
-        
+        //check all horizontal-vertical line pairs for intersections
+        res.push2(linesIntersect(this.x1, this.x2, this.y1, rect2.x1, rect2.y1, rect2.y2));
+        res.push2(linesIntersect(this.x1, this.x2, this.y1, rect2.x2, rect2.y1, rect2.y2));
+        res.push2(linesIntersect(this.x1, this.x2, this.y2, rect2.x1, rect2.y1, rect2.y2));
+        res.push2(linesIntersect(this.x1, this.x2, this.y2, rect2.x2, rect2.y1, rect2.y2));
+        res.push2(linesIntersect(rect2.x1, rect2.x2, rect2.y1, this.x1, this.y1, this.y2));
+        res.push2(linesIntersect(rect2.x1, rect2.x2, rect2.y1, this.x2, this.y1, this.y2));
+        res.push2(linesIntersect(rect2.x1, rect2.x2, rect2.y2, this.x1, this.y1, this.y2));
+        res.push2(linesIntersect(rect2.x1, rect2.x2, rect2.y2, this.x2, this.y1, this.y2));
+
         return res;
     }
 }
@@ -418,17 +322,21 @@ $('#mainTable').DataTable( {
 //main page, this will be used to create a separate cyclic "task" in the background. The 'for' loops are decomposed and only one 'for'
 //cycle is executed in a timer cycle. Warning: for cycles originally ran after each other cannot be paralellized inside the timer
 //loop, because the next depends on the results of the previous one. That's why the step#ready variables are created.
-//TODO: it is possible to decompose nested fors if needed
 const CYCLETIME = 1;    //1ms is impossible for the browser, practically it means "run as fast as possible"
+const sp_inc = 200;     //change speed (cycletime) with this number
 global.tick = 0;
 global.task = 0;
+global.speed = CYCLETIME;   //speed can be slowed down during run
 global.mainTask = null; //the ID for the timer will be stored here
 
 //This trick enables to call a function ('start()' and 'stop()') without "()". Then it's easy to write commands in the console
-Object.defineProperty(global, "start",   { get: function() { mainTask = setInterval(mainTaskFunction, CYCLETIME); return mainTask; } } );
-Object.defineProperty(global, "stop",    { get: function() { clearInterval(mainTask);                             return mainTask; } } );
-Object.defineProperty(global, "reset",   { get: function() { stop; tick=0; task=0; pi=0;                          return mainTask; } } );  //TODO: reset/reinit all globals
-Object.defineProperty(global, "restart", { get: function() { reset; start;                                        return mainTask; } } );
+Object.defineProperty(global, "start",   { get: function() { mainTask = setInterval(mainTaskFunction, speed);   return mainTask; } } );
+Object.defineProperty(global, "stop",    { get: function() { clearInterval(mainTask);                           return mainTask; } } );
+Object.defineProperty(global, "reset",   { get: function() { stop; tick=0; task=0; pi=0;                        return mainTask; } } ); //TODO: reset/reinit all globals
+Object.defineProperty(global, "restart", { get: function() { reset; start;                                      return mainTask; } } );
+//those commands control the speed of the algorithm (via the timer cycletime)
+Object.defineProperty(global, "slower",  { get: function() { speed += sp_inc; stop; start;                      return speed; } } );
+Object.defineProperty(global, "faster",  { get: function() { if((speed-=sp_inc)<CYCLETIME) speed=CYCLETIME; stop; start; return speed; } } );
 
 
 //this function is ran cyclically
@@ -455,6 +363,12 @@ mainTaskFunction = function()
             {
                 return value;
             }
+            else if(name == "longitude")
+            {
+                //Longitude to km ratio is not the same as latitude to km ratio. The number 1.48 is used to compensate longitude to have the same
+                //  ratio as latitude has. The number is calculated based on the original representation of gym locations on the map on pokemongomap.info.
+                return parseFloat(atob(value))/1.48;
+            }
             else
             {
                 return parseFloat(atob(value));
@@ -474,6 +388,24 @@ mainTaskFunction = function()
     //- grow circles from specific points (like corners and intersections) of the parent area till each contains 50 gyms and till all gyms belong to at least one sub-area
     //x grow squares 
     //- split up the parent area to fixed rectangles
+    
+    //Subarea generation:
+    //The subareas will be rectangles. The rectangle representing the whole analyzed area (the main rectangle) will be used as the root of the following iteration: this will be the only element in the rectangle collection when the algorithm starts
+    //1. collect points: all corners of all rectangles and all intersections of all rectangles (from the rectangles collection)
+    //2. remove the points which are inside in any subarea (any rectangle representing a sub-area, so all rectangles except the main one)
+    //3. order the remaining points according to the X coordinates (secondary order them according to Y)
+    //4. select the first from the ordered list
+    //5. draw a big rectangle around that point (so that point will be the center of the rectangle)
+    //6. count the gyms inside that rectangle. If there is more inside than a threshold (50), step to 6a, else step to 6b
+    //   if the algorithm steps here more than 15 times, stop it and step to 7.
+    //6a draw a smaller rectangle around the point and step to 6.
+    //6b draw a bigger rectangle around the point and step to 6.
+    //7. add this new rectangle to the rectangles collection
+    //8. check if all gyms are inside at least one rectangle. If no, step to 1. else step to 9.
+    //9. the subareas are ready to search the closest 10 gyms
+    //The algorithm to make the rectangle size bigger or smaller in step 6. is like a binary search algorithm: it uses halving/averaging of previous limits.
+    //Ordering at step 3. helps to avoid deadlocks in the algorithm.
+    //The result of the algorithm is a collection of well-overlapping rectangles (as subareas) covering all gyms.
     
     //generate a lookup table for factorials
     //only till 51, because of the sub-area size
@@ -508,13 +440,20 @@ mainTaskFunction = function()
     //first create a rectangle showing the area
     if(4==task)
     {
-        canvas = document.getElementById("mainCanvas");
+        //because one canvas does not support several layers, the layer behaviour will be imitated using several canvases on top of each other
+        //
+        //  role on subarea sizing                  role on nearest finding
+        //
+        //0 main layer containing main frame and points showing the location of each gym (black) (same for both)
+        //1 final subareas (black)                  best groups per each subarea
+        //2 subarea centers to analyze (red)        actually analyzed subarea
+        //3 actual sized rectangle (green)          actually analyzed points (gyms)
+        
+        canvas = document.getElementById("mainCanvas").getElementsByTagName("canvas");
+        global.c = new Array(); //this will hold the canvas 2D contextes
         //make the area fit into the canvas
-        var width = canvas.clientWidth;
-        var height= canvas.clientHeight;
-        //these properties behave independently of the assigned style, so override the default
-        canvas.width = width;
-        canvas.height = height;
+        var width = canvas[0].clientWidth;
+        var height= canvas[0].clientHeight;
         //compute right scaling ratio
         //first try to let the area width 100% of the canvas width
         //rat * areaWidth = canvasWidth -> rat = canvas/area
@@ -528,106 +467,245 @@ mainTaskFunction = function()
         {
             //keep the first scale ratio
         }
-        //use the scale on the canvas
-        global.c = canvas.getContext("2d");
-        c.strokeStyle = "black"
-        //translate with 0.5, because it tries to draw between pixels
-        //also translate with height as the first step of converting coordinate system (by default origin is at the top left corner, but the map has the origin at the bottom left)
-        c.translate(0.5, height-0.5);  //this should be done before scaling. Scaling will not affect this (translating with 0.5 will remain 0.5 after scaling)
-        //scale the canvas to use the units of the map (longitude and latitude)
-        //minus is needed to convert the coordinate system (by default y grows downwards, but on the gym map y grows upwards)
-        c.scale(scale, -scale);
-        //after scaling the line width should be set properly (it will work as 1px)
-        c.lineWidth = 1/scale;
-        //translate again to compensate minX and minY
-        c.translate(-minX, -minY);
-        //draw the map area rectangle
-        c.strokeRect(minX,minY,maxX-minX,maxY-minY);
+        //apply the following settings on all layers
+        for(var i=0; i<canvas.length; i++)
+        {
+            //these properties behave independently of the assigned style, so override the default
+            canvas[i].width = width;
+            canvas[i].height = height;
+            //use the scale on the canvas
+            c[i] = canvas[i].getContext("2d");
+            //translate with 0.5, because it tries to draw between pixels
+            //also translate with height as the first step of converting coordinate system (by default origin is at the top left corner, but the map has the origin at the bottom left)
+            c[i].translate(0.5, height-0.5);  //this should be done before scaling. Scaling will not affect this (translating with 0.5 will remain 0.5 after scaling)
+            //scale the canvas to use the units of the map (longitude and latitude)
+            //minus is needed to convert the coordinate system (by default y grows downwards, but on the gym map y grows upwards)
+            c[i].scale(scale, -scale);
+            //after scaling the line width should be set properly (it will work as 1px)
+            c[i].lineWidth = 1/scale;
+            //translate again to compensate minX and minY
+            c[i].translate(-minX, -minY);
+        }
+        //every layer has it's own color
+        c[0].strokeStyle = "black"
+        c[1].strokeStyle = "black"
+        c[2].strokeStyle = "red"
+        c[3].strokeStyle = "green"
+        //set pointSize which helps to draw "points"
+        pointSize = pointSizePx / scale;
+        //prepare globals for subarea computation
+        global.rects = new Array(); //result of the computation: rectangles which contain about 50 gyms per each
+        global.point = new Array(); //a point selected from rectangle corners and intersections to draw a new rectangle around it
+        global.lowerSize = 0;       //lower rectangle size for binary search algorithm
+        global.higherSize = 0;      //higher rectangle size for binary search algorithm
+        global.size = 0;            //actual rectangle size for binary search algorithm
+        //the first, main rectangle will be the map area rectangle (drawn only on the main canvas)
+        rects[0] = new Rectangle(minX, minY, maxX, maxY, c[0]);
+        
         task++;
     }
     
-    //draw all gyms on the canvas
+    //draw all gyms on the main canvas
     if(5==task){if(tick<0){}else if(tick < data.length)
     {
-        c.strokeRect(data[tick].longitude-(c.lineWidth/2), data[tick].latitude-(c.lineWidth/2), c.lineWidth, c.lineWidth);
+        drawO(data[tick].longitude, data[tick].latitude, c[0]);
     }
     else{task++;tick=0;return;}}
     
-    //create overlapped squares next to each other from (minX; minY) to (maxX; minY)
-    //use binary search-like algorithm to find the right size for each square
+    //init next step
     if(6==task)
     {
+        //init point to out of the main rectangle
+        point[0] = maxX + pointSize;
+        point[1] = maxY + pointSize;
+        
+        //erase the layer (practically only the seen area)
+        c[2].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
+        
+        task++;
         /*
-        var lengthX = maxX-minX;
-        var lengthY = maxY-minY;
-        if(lengthX > lengthY)
+        //slow down animation to check if the algorithm works correctly:
+        speed = 100;
+        stop;
+        start;
+        */
+    }
+    
+    //find the next point from corners and intersections
+    //also select the point with the smallest X coordinate
+    if(7==task){if(tick<0){}else if(tick < rects.length)
+    {
+        //collect corners of the tick-th rectangle and also collect all intersections with previous rectangles
+        var points = rects[tick].getCorners();
+        for(var i=0; i<tick; i++)
         {
-            global.step = lengthY/100;
+            points = points.concat(rects[tick].getIntersect(rects[i]));
+        }
+        //remove points which are part of at least one rectangle
+        //but draw all found points
+        for(var i=0; i<points.length; i++)
+        {
+            //draw all found points
+            drawX(points[i], c[2]);
+            //skip points which are out of the main rectangle (being on the edge means that the point is inside the rectangle)
+            if(0 > rects[0].pointIsInside(points[i]))
+            {
+                continue;
+            }
+            //skip points which has bigger X coordinate
+            else if(points[i][0] > point[0]+pointSize)
+            {
+                continue;
+            }
+            //skip points if its X coordinate is the same as the previously stored one and its Y coordinate is bigger
+            //TODO: equal check on floats
+            else if( (points[i][0] == point[0]) && (points[i][1] > point[1]) )
+            {
+                continue;
+            }
+            else
+            {
+                //don't skip, continue checking of this point
+            }
+            //check if the point is inside any rectangle (being on an edge means it's not inside: all points are on at least one edge/corner of a rectangle which shouldn't be considered at this check)
+            var outside = true;
+            for(var j=1; j<rects.length; j++)
+            {
+                if(0 < rects[j].pointIsInside(points[i]))
+                {
+                    outside = false;
+                    break;
+                }
+            }
+            if(outside)
+            {
+                //store the point
+                point = points[i];
+                //highlight the remaining points
+                drawO(points[i], c[2]);
+            }
+        }
+    }
+    else{task++;tick=0;return;}}
+    
+    //init binary search algorithm variables
+    if(8==task)
+    {
+        //erase the layer (practically only the seen area)
+        c[2].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
+        
+        //highlight point (center of the rectangle to be drawn)
+        drawX(point, c[1]);
+        
+        lowerSize = 0;
+        if(maxX-minX > maxY-minY)
+        {
+            higherSize = 2*(maxX-minX);
         }
         else
         {
-            global.step = lengthX/100;
+            higherSize = 2*(maxY-minY);
         }
-        */
-        global.rects = new Array();
-        rects[0] = new Rectangle(minX, minY, maxX, maxY);
+        size = higherSize;
+        
         task++;
     }
     
-    if(7==task)
+    //use binary search-like algorithm to find the right size for each square
+    if(9==task)
     {
-        //1. search for a corner/intersection
-        //collect all corner coordinates of all rectangles
-        //generate all intersection coordinates
-        //create a sorted list of coordinates: primary order based on x, then secondary based on y
-        //2. check from the beginning of the list if each coordinate is inside any other rectangle
-        //- if yes, skip it
-        //- if no, follow the next steps
-        //3. set the size of the new rectangle to contain 50 gyms with the selected corner/intersection being the center of the rectangle
-        //4. restart it as long as any gym exists which is not part of any rectangle (except the 0th which is the main/parent area)
-        //the algorithm can fail if all corner/intersection is considered as being in a rectangle, but a gym still exist outside of the rectangles, but if the coordinate list is sorted well, this situation can be avoided
+        //erase the layer (practically only the seen area)
+        c[3].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
         
-        //new idea: to serialize all the steps
-        //1. start with the last step. If the needed data is not available, skip to the next step
-        //2. as with the last step, try to perform the step before the last
-        //3. do this series till the first step
-        //4. inside each step there can be a separate cycle with visualization of corner and intersection finding, rectangle sizing, etc
+        //create (and draw) a rectangle object around the actual point with the actual size
+        var rect = new Rectangle(point[0]-size/2,
+                                 point[1]-size/2,
+                                 point[0]+size/2,
+                                 point[1]+size/2,
+                                 c[3]);
         
-        //to visualize these steps, I need a canvas functionality, like
-        //- save        not exists
-        //- undo        not exists
-        //- layers      not exists, but multiple canvases can be used over each other
-        //! animation   
-        //- redrawing   works, but lot of work
-        //- use any library to solve this
-        
-        var ps = new Array();
-        //collect all corner coordinates
-        for(var i=0; i<rects.length; i++)
+        //count the gyms inside the rectangle
+        count = 0;
+        for(var i=0; i<data.length; i++)
         {
-            var p = new Array();
-            p.push(rects[i].x1)
-            p.push(rects[i].y1)
-            ps.push(p);
-            p = [];
-            p.push(rects[i].x1)
-            p.push(rects[i].y2)
-            ps.push(p);
-            p = [];
-            p.push(rects[i].x2)
-            p.push(rects[i].y1)
-            ps.push(p);
-            p = [];
-            p.push(rects[i].x2)
-            p.push(rects[i].y2)
-            ps.push(p);
+            //gym on edge doesn't count. Make rectangle bigger to be the gym really inside the rectangle
+            //x=longitude, y=latitude
+            if(0 < rect.pointIsInside(data[i].longitude, data[i].latitude))
+            {
+                count++;
+            }
         }
         
+        //check for next steps
+        if(tick >= binSearchStepThreshold)
+        {
+            //store rectangle
+            rects.push(rect);
+            //draw it to an other layer to keep it
+            rect.draw(c[1]);
+            //clear layer
+            c[3].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
+            task++;
+            tick=0;
+            return;
+        }
+        else if(subArea > count)
+        {
+            lowerSize = size;
+        }
+        else //subArea <= count --> make the rectangle smaller even if the the count condition is met (count == subArea) to make the rectangle as small as possible
+        {
+            higherSize = size;
+        }
+        size = (higherSize + lowerSize)/2
+    }
+    
+    //check if the subareas cover all gyms
+    if(10==task){if(tick<0){}else if(tick < data.length)
+    {
+        drawX(data[tick].longitude, data[tick].latitude, c[3]);
+        
+        var notInSubArea = true;
+        for(var i=1; i<rects.length; i++)   //exclude the main rectangle
+        {
+            //gym on edge counts to avoid adding more subareas than really needed
+            //x=longitude, y=latitude
+            if(0 <= rects[i].pointIsInside(data[tick].longitude, data[tick].latitude))
+            {
+                notInSubArea = false;
+                break;
+            }
+        }
+        
+        if(notInSubArea)
+        {
+            //clear layer
+            c[3].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
+
+            task = 6;
+            tick = 0;
+            return;
+        }
+    }
+    else{task++;tick=0;return;}}
+    
+    //go through all subareas and search for the closest gyms in each
+    if(11==task)
+    {
+        //clear layer
+        c[3].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
+        
+        //TODO:
+        //- make possible to deactivate visualisation
+        //- make subarea shapes configurable: squares, rectangles, circles
+        //- make subarea generation direction configurable: start point, X, Y, around, etc
+        //  possible combinations: start from corner #(4), follow X/Y direction -> sum 8 possibility
         
         task++;
         return;
     }
     
+    //TODO:
     //1. generate combinations
     //2. calculate a number usable to compare the combinations
     //3. compare the numbers and select the best one(s)
@@ -636,7 +714,7 @@ mainTaskFunction = function()
 //------------------------------ STATISTICS ------------------------------
     
     
-    if(8==task) stop;
+    if(12==task) stop;
     document.getElementById("cycle").innerHTML = tick;
     document.getElementById("taskID").innerHTML = task;
     tick++;
@@ -665,6 +743,12 @@ div.DTFC_LeftBodyLiner {
     border-right: 1px solid black;
     overflow-x: hidden;
 }
+canvas {
+    position: absolute;
+    border: black 1px solid;
+    width: 100%;
+    height: 800px;
+}
 </style>
 </head>
 <body>
@@ -675,6 +759,11 @@ Cycle counter: <span id="cycle"></span><br><br>
 
 
 <table id="mainTable"></table>
-<canvas id="mainCanvas" style="border: black 1px solid; width: 100%; height: 400px;"></canvas>
+<div id="mainCanvas">
+    <canvas style="'z-index: 1"></canvas>
+    <canvas style="'z-index: 2"></canvas>
+    <canvas style="'z-index: 3"></canvas>
+    <canvas style="'z-index: 4"></canvas>
+</div>
 </body>
 </html>
