@@ -97,6 +97,50 @@ function binom(n, k)
     return ret;
 }
 
+//a recursive, iterative function to generate combination based on a previous one.
+//Inputs:
+//- initial array (previous combination or initial combination)
+//- maximum usable number (min is 1, but the initiali array shows it indirectly)
+//- counter to let the recursively called function communicate with its instances
+//Outputs:
+//- the modified array
+//- the modified counter
+//- flag showing that new combination exists
+function getNextCombination(initArray, max, index)
+{
+    var ret = false;
+    
+    initArray[index]++;
+    
+    if(max >= initArray[index])
+    {
+        index++;
+        if(initArray.length <= index)
+        {
+            ret = true;
+        }
+        else
+        {
+            initArray[index] = initArray[index-1];
+            ret = getNextCombination(initArray, max, index);
+        }
+    }
+    else
+    {
+        index--;
+        if(0 > index)
+        {
+            ret = false;
+        }
+        else
+        {
+            ret = getNextCombination(initArray, max, index);
+        }
+    }
+    
+    return ret;
+}
+
 function drawX(x, y, canvas)
 {
     if(x.constructor === Array)
@@ -136,6 +180,12 @@ function drawO(x, y, canvas)
     canvas.arc(x, y, pointSize, 0, 2*Math.PI);
     canvas.stroke();
 }
+//draws lines between all points
+function joinWithLines(points, canvas)
+{
+    
+}
+
 //first horizontal line x, y1, y2, then vertical line x1, x2, y
 //this function doesn't support arrays as coordinates
 function linesIntersect(h_x1, h_x2, h_y, v_x, v_y1, v_y2)
@@ -606,6 +656,9 @@ var tick = 0;
 var task = 0;
 var speed = CYCLETIME;   //speed can be slowed down during run
 var mainTask = 0; //the ID for the timer will be stored here
+//for combination checks
+var nextSubArea = 0;
+var comb2check = new Array();
 
 //this function is ran cyclically
 function mainTaskFunction()
@@ -1039,8 +1092,46 @@ function mainTaskFunction()
         {
             c[3].clearRect(minX-pointSize, minY-pointSize, maxX-minX+2*pointSize, maxY-minY+2*pointSize);
         }
-
-        task++;
+        
+        nextSubArea++;
+        if(subAreas.length <= nextSubArea)
+        {
+            task = 13;
+        }
+        else
+        {
+            for(var i=0; i<numOfGyms; i++)    //eslint-disable-line no-redeclare
+            {
+                comb2check[i]=i;
+            }
+            task++;
+            tick=0;
+        }
+    }
+    
+    if(12===task)
+    {
+        //get next combination
+        var iterator = comb2check.length;   //don't pass it directly to getNextCombination() because it will manipulate it
+        var end = getNextCombination(comb2check, subAreas[nextSubArea].length-1, iterator);
+        
+        //draw lines between the points in the combination
+        var ArrayOfGyms = new Array();
+        for(var i=0; i<comb2check.length; i++)  //eslint-disable-line no-redeclare
+        {
+            ArrayOfGyms[i] = subAreas[nextSubArea].gyms[comb2check[i]];
+        }
+        joinWithLines(ArrayOfGyms);
+        
+        //check if there can be next combinations
+        if(end)
+        {
+            task--;
+        }
+        else
+        {
+            //do nothing, continue iteration here
+        }
         return;
     }
 
@@ -1053,7 +1144,7 @@ function mainTaskFunction()
 //------------------------------ STATISTICS ------------------------------
 
 
-    if(12===task)
+    if(13===task)
     {
         stop;   //eslint-disable-line no-unused-expressions
     }
